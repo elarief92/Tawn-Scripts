@@ -222,8 +222,9 @@ sonar-project.properties
         deleteDir()
         unstash 'build-artifact'
         writeFile file: 'epic.txt', text: params.EPIC
+        writeFile file: 'artifact_version.txt', text: env.ARTIFACT_VERSION
 
-        archiveArtifacts artifacts: 'frontend/build/ar.zip,epic.txt', fingerprint: true, onlyIfSuccessful: true
+        archiveArtifacts artifacts: 'frontend/build/ar.zip,epic.txt,artifact_version.txt', fingerprint: true, onlyIfSuccessful: true
       }
     }
   }

@@ -1,0 +1,99 @@
+pipeline {
+    agent { label 'built-in' }
+
+    environment {
+        NEXUS_URL        = 'http://nexus.tawuniya.com/repository/rollback-packages'
+        CREDENTIAL_ID    = 'nexus-upload'
+        SOURCE_JOB       = 'Sonarqube/tawn/FE-Landing-AR-V2'
+        ZIP_PATH         = 'frontend/build/ar.zip'
+        VERSION_FILE     = 'artifact_version.txt'
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+    }
+
+    stages {
+        stage('Upload to Nexus') {
+            steps {
+                deleteDir()
+
+                copyArtifacts(
+                    projectName: env.SOURCE_JOB,
+                    selector: lastSuccessful(),
+                    filter: "${env.ZIP_PATH},${env.VERSION_FILE}",
+                    fingerprintArtifacts: true
+                )
+
+                script {
+                    if (!fileExists(env.ZIP_PATH)) {
+                        error "ZIP file not found: ${env.ZIP_PATH}"
+                    }
+
+                    if (!fileExists(env.VERSION_FILE)) {
+                        error "Version file not found: ${env.VERSION_FILE}"
+                    }
+
+                    def artifactVersion = readFile(env.VERSION_FILE).trim()
+                    if (!artifactVersion) {
+                        error "artifact_version.txt is empty"
+                    }
+
+                    def uploadedFileName = "${artifactVersion}.zip"
+                    def buildSuccess = false
+                    def ts = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                                .plusHours(3)
+                                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH-mm-ss"))
+
+                    try {
+                        retry(3) {
+                            withCredentials([
+                                usernamePassword(
+                                    credentialsId: env.CREDENTIAL_ID,
+                                    usernameVariable: 'NEXUS_USERNAME',
+                                    passwordVariable: 'NEXUS_PASSWORD'
+                                )
+                            ]) {
+                                bat """
+                                    curl --fail -v -u %NEXUS_USERNAME%:%NEXUS_PASSWORD% --upload-file "${env.ZIP_PATH}" "${env.NEXUS_URL}/${env.JOB_BASE_NAME}/${uploadedFileName}"
+                                """
+                            }
+                        }
+
+                        echo "Uploaded ${uploadedFileName} successfully."
+                        buildSuccess = true
+
+                    } finally {
+                        if (buildSuccess) {
+                            emailext(
+                                subject: "✅ Nexus Upload Successful - ${env.JOB_BASE_NAME} [${ts}]",
+                                body: """
+                                <h3 style="color:green;">Nexus Upload Completed Successfully</h3>
+                                <p><b>Job:</b> ${env.JOB_NAME}</p>
+                                <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                                <p><b>Source Job:</b> ${env.SOURCE_JOB}</p>
+                                <p><b>Uploaded File:</b> ${uploadedFileName}</p>
+                                <p><b>Uploaded To:</b> ${env.NEXUS_URL}/${env.JOB_BASE_NAME}/${uploadedFileName}</p>
+                                <p><b>Timestamp:</b> ${ts}</p>
+                                """,
+                                to: env.EMAIL_RECIPIENTS,
+                                mimeType: 'text/html'
+                            )
+                        } else {
+                            emailext(
+                                subject: "❌ Nexus Upload Failed - ${env.JOB_BASE_NAME} [${ts}]",
+                                body: """
+                                <h3 style="color:red;">Nexus Upload Failed</h3>
+                                <p><b>Job:</b> ${env.JOB_NAME}</p>
+                                <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                                <p><b>Source Job:</b> ${env.SOURCE_JOB}</p>
+                                <p><b>Stage Failed:</b> Check Jenkins console logs.</p>
+                                <p><b>Timestamp:</b> ${ts}</p>
+                                """,
+                                to: env.EMAIL_RECIPIENTS,
+                                mimeType: 'text/html'
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
