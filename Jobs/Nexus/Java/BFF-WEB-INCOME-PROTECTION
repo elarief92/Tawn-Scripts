@@ -6,7 +6,7 @@ pipeline {
     environment {
         NEXUS_URL        = 'http://nexus.tawuniya.com/repository/rollback-packages'
         CREDENTIAL_ID    = 'nexus-upload'
-        DIR              = 'E:/Jenkins/Home/workspace/Sonarqube/tawn/BFF-AAMAL-ESERVICES/target/'
+        DIR              = 'E:/Jenkins/Home/workspace/Sonarqube/tawn/BFF-WEB-INCOME-PROTECTION/target/'
         EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
     }
 
