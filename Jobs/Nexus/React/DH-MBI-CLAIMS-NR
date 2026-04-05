@@ -7,7 +7,7 @@ pipeline {
     environment {
         NEXUS_URL        = 'http://nexus.tawuniya.com/repository/rollback-packages'
         CREDENTIAL_ID    = 'nexus-upload'
-        SOURCE_JOB       = 'Sonarqube/DH-MBI-CLAIMS-NR-(Build+Scan)2'
+        SOURCE_JOB       = 'Sonarqube/tawn/DH-MBI-CLAIMS-NR'
         PACKAGE_NAME     = 'mbi-claims-nr'
         EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
     }

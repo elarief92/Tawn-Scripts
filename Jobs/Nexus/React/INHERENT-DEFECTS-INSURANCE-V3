@@ -1,0 +1,30 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+
+    agent { label 'built-in' }
+
+    environment {
+        NEXUS_URL        = 'http://nexus.tawuniya.com/repository/rollback-packages'
+        CREDENTIAL_ID    = 'nexus-upload'
+        SOURCE_JOB       = 'Sonarqube/tawn/INHERENT-DEFECTS-INSURANCE-V3'
+        PACKAGE_NAME     = 'inherent-defects-insurance'
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+    }
+
+    stages {
+
+        stage('Zip and Upload React Build to Nexus') {
+            steps {
+                script {
+                    ReactNexusUpload(
+                        nexusUrl: env.NEXUS_URL,
+                        credentialId: env.CREDENTIAL_ID,
+                        sourceJob: env.SOURCE_JOB,
+                        packageName: env.PACKAGE_NAME
+                    )
+                }
+            }
+        }
+    }
+}
