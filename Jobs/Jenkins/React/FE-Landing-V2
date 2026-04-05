@@ -1,0 +1,159 @@
+pipeline {
+  agent none
+
+  parameters {
+    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number')
+  }
+
+  environment {
+    BRANCH_NAME = 'PROD'
+    REPO_NAME   = 'DH-Landing-V2'
+    PROJECT_KEY = 'DXP-FE-Landing-V2'
+  }
+
+  stages {
+    stage('Checkout') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        bbs_checkout(
+          branches: [[name: "*/${env.BRANCH_NAME}"]],
+          credentialsId: 'Admin_Bitbucket',
+          id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+          projectName: 'DXP',
+          repositoryName: 'DH-Landing-V2',
+          serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+        )
+      }
+    }
+
+    stage('Set Build Name') {
+      agent { label 'built-in' }
+      steps {
+        script {
+          currentBuild.displayName = "${params.EPIC} ⇔ ${env.BUILD_NUMBER}"
+          currentBuild.description = "Branch: ${env.BRANCH_NAME} | Build: #${env.BUILD_NUMBER} | Repo: ${env.REPO_NAME}"
+        }
+      }
+    }
+
+    stage('Copy Configuration') {
+      agent { label 'built-in' }
+      steps {
+        bat """
+        if not exist "E:\\Jenkins\\Home\\workspace\\Digital Experience Platforms\\Configuration\\PROD\\dh-landing-v2" (
+          echo Configuration path not found
+          exit /b 1
+        )
+
+        robocopy "E:\\Jenkins\\Home\\workspace\\Digital Experience Platforms\\Configuration\\PROD\\dh-landing-v2" "%WORKSPACE%" /E /J /COPY:DATS /MT:1 /IS /IT /IM /X /V /NP /NODCOPY /XD .*
+        if %ERRORLEVEL% LEQ 7 exit /b 0
+        exit /b %ERRORLEVEL%
+        """
+      }
+    }
+
+    stage('Install and Build') {
+      agent { label 'built-in' }
+      steps {
+        script {
+          def nodeHome = tool 'NodeJS_20'
+          env.PATH = "${nodeHome};${nodeHome}\\node_modules\\npm\\bin;${env.PATH}"
+        }
+        bat '''
+        cd frontend
+        if exist node_modules rmdir /s /q node_modules
+        set NODE_OPTIONS=--openssl-legacy-provider
+        npm install --legacy-peer-deps && npm run build:prod
+        '''
+      }
+    }
+
+    stage('Package Zip') {
+      agent { label 'built-in' }
+      steps {
+        bat '''
+        cd frontend\\build
+        if exist ROOT.zip del /f /q ROOT.zip
+        7z a -tzip ROOT.zip . || exit /b %ERRORLEVEL%
+        '''
+      }
+    }
+
+    stage('Prepare for Sonar') {
+      agent { label 'built-in' }
+      steps {
+        stash name: 'sonar-src',
+              includes: '''
+frontend/src/**,
+frontend/tsconfig*.json,
+package.json,
+tsconfig*.json,
+sonar-project.properties
+'''.trim(),
+              excludes: '''
+**/node_modules/**,
+**/build/**,
+**/dist/**,
+**/coverage/**,
+**/.git/**
+'''.trim()
+
+        stash name: 'build-artifact', includes: 'frontend/build/ROOT.zip'
+      }
+    }
+
+    stage('SonarQube Analysis') {
+      agent { label 'SonarQube' }
+      steps {
+        deleteDir()
+        unstash 'sonar-src'
+
+        script {
+          def nodeHome = tool 'NodeJS_20'
+          def scannerHome = tool 'sonar-scanner-cli'
+
+          env.PATH = "${nodeHome};${nodeHome}\\node_modules\\npm\\bin;${scannerHome}\\bin;${env.PATH}"
+
+          withSonarQubeEnv('SonarQube') {
+            bat """
+            "${scannerHome}\\bin\\sonar-scanner.bat" ^
+            -Dsonar.projectKey=${env.PROJECT_KEY} ^
+            -Dsonar.projectName=${env.PROJECT_KEY} ^
+            -Dsonar.projectVersion=${env.BUILD_NUMBER} ^
+            -Dsonar.sources=frontend\\src ^
+            -Dsonar.inclusions=frontend\\src\\** ^
+            -Dsonar.sourceEncoding=UTF-8 ^
+            -Dsonar.branch.name=${env.BRANCH_NAME} ^
+            -Dsonar.scm.provider=git ^
+            -Dsonar.exclusions=**\\*.spec.ts,**\\*.spec.tsx,**\\*.test.ts,**\\*.test.tsx,**\\node_modules\\**,**\\build\\**,**\\dist\\** ^
+            -Dsonar.scanner.skip.ssl.verification=true ^
+            -Dsonar.nodejs.executable="${nodeHome}\\node.exe"
+            """
+          }
+        }
+      }
+    }
+
+    /*
+    stage('Quality Gate') {
+      agent { label 'SonarQube' }
+      steps {
+        timeout(time: 1, unit: 'HOURS') {
+          waitForQualityGate abortPipeline: true
+        }
+      }
+    }
+    */
+
+    stage('Archive Artifacts') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        unstash 'build-artifact'
+        writeFile file: 'artifact_version.txt', text: env.BUILD_NUMBER
+        archiveArtifacts artifacts: 'frontend/build/ROOT.zip,artifact_version.txt', fingerprint: true, onlyIfSuccessful: true
+      }
+    }
+  }
+}

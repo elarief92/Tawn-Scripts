@@ -1,0 +1,49 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+  agent none
+
+  parameters {
+    string(name: 'EPIC', defaultValue: '', description: 'Use a Valid Jira Epic Number')
+  }
+
+  environment {
+    BRANCH_NAME = 'PROD'
+  }
+
+  stages {
+    stage('Build + Scan') {
+      steps {
+        script {
+          def branchName = env.BRANCH_NAME.toString()
+          def envLower   = branchName.toLowerCase()
+
+          bffBuildScan([
+            epic: params.EPIC,
+            branch: branchName,
+            lob: 'DXP',
+            buildAgent: 'built-in',
+            sonarAgent: 'SonarQube',
+
+            bbs: [
+              credentialsId: 'Admin_Bitbucket',
+              id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+              projectName: 'DXP',
+              repositoryName: 'BFF-WEB',
+              serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+            ],
+
+            mvnCmd: "mvn -Dmaven.compiler.fork=true -Dmaven.compiler.executable=\"C:\\\\Program Files\\\\Java\\\\jdk-21\\\\bin\\\\javac.exe\" clean package -Denvironment=${envLower} -DapplicationName=incomeprotection-api -DlogDirectory=\"/u01/Logs\" -DartifactVersion=${env.ARTIFACT_VERSION}",
+
+            sonar: [
+              server: 'SonarQube',
+              projectKey: 'BFF-WEB-INCOME-PROTECTION',
+              sources: 'src/main/java',
+              binaries: 'target/classes'
+            ]
+          ])
+        }
+      }
+    }
+  }
+}

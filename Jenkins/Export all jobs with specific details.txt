@@ -1,0 +1,39 @@
+import jenkins.model.*
+import hudson.model.*
+import org.jenkinsci.plugins.workflow.job.WorkflowJob
+import org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject
+
+// Print CSV Header
+println("NAME,TYPE,URL,ENABLED_BUILDABLE,LAST_BUILD,LAST_SUCCESS,LAST_FAILURE,TRIGGERS,JOB_KIND")
+
+Jenkins.instance.getAllItems(Job.class).each { job ->
+
+    def name = job.fullName
+    def type = job.class.simpleName
+    def url = job.absoluteUrl
+    def enabled = job.isBuildable()
+    def lastBuild = job.getLastBuild()?.number ?: "N/A"
+    def lastSuccess = job.getLastSuccessfulBuild()?.number ?: "N/A"
+    def lastFailure = job.getLastFailedBuild()?.number ?: "N/A"
+
+    // Triggers
+    def triggers = "none"
+    try {
+        def t = job.getTriggers()
+        if (t && !t.isEmpty()) {
+            triggers = t.values().collect { it.class.simpleName }.join("|")
+        }
+    } catch (ignored) {}
+
+    // Job Kind
+    def jobKind = "Other"
+    if (job instanceof WorkflowJob) {
+        jobKind = "Pipeline"
+    } else if (job instanceof WorkflowMultiBranchProject) {
+        jobKind = "Multibranch"
+    } else if (job instanceof FreeStyleProject) {
+        jobKind = "Freestyle"
+    }
+
+    println("\"${name}\",\"${type}\",\"${url}\",\"${enabled}\",\"${lastBuild}\",\"${lastSuccess}\",\"${lastFailure}\",\"${triggers}\",\"${jobKind}\"")
+}

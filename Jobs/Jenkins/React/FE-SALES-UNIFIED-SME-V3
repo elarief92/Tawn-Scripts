@@ -1,0 +1,61 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+  agent none
+
+  parameters {
+    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number')
+  }
+
+  environment {
+    BRANCH_NAME = 'QC'
+  }
+
+  stages {
+    stage('Build + Scan') {
+      steps {
+        script {
+          reactBuildScan(
+            epic: params.EPIC,
+            branch: env.BRANCH_NAME,
+            lob: 'DXP',
+            buildAgent: 'built-in',
+            secretScanningAgent: 'built-in',
+            sonarAgent: 'SonarQube',
+
+            bbs: [
+              credentialsId: 'Admin_Bitbucket',
+              id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+              projectName: 'DXP',
+              repositoryName: 'DH-Sales-V3',
+              serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+            ],
+
+            app: [
+              packageFile: 'package.json'
+            ],
+
+            node: [
+              resetCmd: 'npx nx reset',
+              installCmd: 'npm install --legacy-peer-deps',
+              buildCmd: 'npx nx build unified-sme --configuration=development'
+            ],
+
+            artifacts: [
+              path: 'dist/apps/unified-sme/**'
+            ],
+
+            sonar: [
+              server: 'SonarQube',
+              projectKey: 'FE-SALES-UNIFIED-SME-V3',
+              sources: 'apps/unified-sme/src',
+              inclusions: 'apps/unified-sme/**',
+              tsconfigPaths: 'apps/unified-sme/tsconfig.json',
+              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map'
+            ]
+          )
+        }
+      }
+    }
+  }
+}

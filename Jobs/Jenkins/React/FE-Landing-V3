@@ -1,0 +1,190 @@
+pipeline {
+  agent none
+
+  parameters {
+    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number')
+  }
+
+  environment {
+    BRANCH_NAME = 'PROD'
+    REPO_NAME   = 'DH-Landing-V3'
+    PROJECT_KEY = 'DXP-FE-Landing-V3'
+    LOB         = 'DXP'
+  }
+
+  stages {
+    stage('Checkout') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        bbs_checkout(
+          branches: [[name: "*/${env.BRANCH_NAME}"]],
+          credentialsId: 'Admin_Bitbucket',
+          id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+          projectName: 'DXP',
+          repositoryName: 'DH-Landing-V3',
+          serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+        )
+      }
+    }
+
+    stage('Generate Release Name') {
+      agent { label 'built-in' }
+      steps {
+        script {
+          String releaseNumber = env.BUILD_NUMBER.toString().trim()
+          String lob           = env.LOB.toString().trim().toUpperCase()
+          String environment   = 'PROD'
+          String packageFile   = 'package.json'
+
+          def allowedEnvs = ['DEV', 'QC', 'UAT', 'PREPROD', 'PROD']
+          def allowedLobs = ['DXP', 'CXP']
+
+          if (!allowedEnvs.contains(environment)) {
+            error("Invalid environment '${environment}'. Allowed: ${allowedEnvs}")
+          }
+
+          if (!allowedLobs.contains(lob)) {
+            error("Invalid LOB '${lob}'. Allowed: ${allowedLobs}")
+          }
+
+          if (!fileExists(packageFile)) {
+            error("package.json file not found: ${packageFile}")
+          }
+
+          def pkg = readJSON file: packageFile
+
+          if (!pkg?.version) {
+            error("Version not found in ${packageFile}")
+          }
+
+          String appVersion      = pkg.version.toString().trim().replace('-SNAPSHOT', '')
+          String versionTag      = "v${appVersion}"
+          String artifactVersion = "R${releaseNumber}-${lob}-${versionTag}-${environment}"
+
+          if (!(artifactVersion ==~ /^R\d+-(DXP|CXP)-v\d+\.\d+\.\d+-(DEV|QC|UAT|PREPROD|PROD)$/)) {
+            error("Invalid artifact version format: ${artifactVersion}")
+          }
+
+          env.APP_VERSION = appVersion
+          env.ARTIFACT_VERSION = artifactVersion
+
+          echo "APP_VERSION=${env.APP_VERSION}"
+          echo "ARTIFACT_VERSION=${env.ARTIFACT_VERSION}"
+        }
+      }
+    }
+
+    stage('Set Build Name') {
+      agent { label 'built-in' }
+      steps {
+        script {
+          currentBuild.displayName = "${params.EPIC} ⇔ ${env.ARTIFACT_VERSION}"
+          currentBuild.description = "Branch: ${env.BRANCH_NAME} | Build: #${env.BUILD_NUMBER} | Repo: ${env.REPO_NAME} | Release: ${env.ARTIFACT_VERSION}"
+        }
+      }
+    }
+
+    stage('Install and Build') {
+      agent { label 'built-in' }
+      steps {
+        script {
+          def nodeHome = tool 'NodeJS'
+          env.PATH = "${nodeHome};${nodeHome}\\node_modules\\npm\\bin;${env.PATH}"
+        }
+        bat '''
+        set NODE_OPTIONS=--openssl-legacy-provider
+        npm install --legacy-peer-deps && npm run build:prod
+        '''
+      }
+    }
+
+    stage('Package Zip') {
+      agent { label 'built-in' }
+      steps {
+        bat '''
+        cd dist
+        if exist ROOT.zip del /f /q ROOT.zip
+        7z a -tzip ROOT.zip . || exit /b %ERRORLEVEL%
+        '''
+      }
+    }
+
+    stage('Prepare for Sonar') {
+      agent { label 'built-in' }
+      steps {
+        stash name: 'sonar-src',
+              includes: '''
+src/**,
+tsconfig*.json,
+package.json,
+sonar-project.properties,
+vite.config.*
+'''.trim(),
+              excludes: '''
+**/node_modules/**,
+**/build/**,
+**/dist/**,
+**/coverage/**,
+**/.git/**
+'''.trim()
+
+        stash name: 'build-artifact', includes: 'dist/ROOT.zip'
+      }
+    }
+
+    stage('SonarQube Analysis') {
+      agent { label 'SonarQube' }
+      steps {
+        deleteDir()
+        unstash 'sonar-src'
+
+        script {
+          def nodeHome = tool 'NodeJS'
+          def scannerHome = tool 'sonar-scanner-cli'
+
+          env.PATH = "${nodeHome};${nodeHome}\\node_modules\\npm\\bin;${scannerHome}\\bin;${env.PATH}"
+
+          withSonarQubeEnv('SonarQube') {
+            bat """
+            "${scannerHome}\\bin\\sonar-scanner.bat" ^
+            -Dsonar.projectKey=${env.PROJECT_KEY} ^
+            -Dsonar.projectName=${env.PROJECT_KEY} ^
+            -Dsonar.projectVersion=${env.ARTIFACT_VERSION} ^
+            -Dsonar.sources=src ^
+            -Dsonar.inclusions=src\\** ^
+            -Dsonar.sourceEncoding=UTF-8 ^
+            -Dsonar.branch.name=${env.BRANCH_NAME} ^
+            -Dsonar.exclusions=**\\*.spec.ts,**\\*.spec.tsx,**\\*.test.ts,**\\*.test.tsx,**\\node_modules\\**,**\\build\\**,**\\dist\\**,src\\app\\Pages\\HealthPodcast\\components\\Medical\\MedicalSpecialtyDetail\\MedicalSpecialtyDetail.tsx ^
+            -Dsonar.scanner.skip.ssl.verification=true ^
+            -Dsonar.nodejs.executable="${nodeHome}\\node.exe"
+            """
+          }
+        }
+      }
+    }
+
+    
+    stage('Quality Gate') {
+      agent { label 'SonarQube' }
+      steps {
+        timeout(time: 1, unit: 'HOURS') {
+          waitForQualityGate abortPipeline: true
+        }
+      }
+    }
+    
+
+    stage('Archive Artifacts') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        unstash 'build-artifact'
+
+        writeFile file: 'epic.txt', text: params.EPIC
+
+        archiveArtifacts artifacts: 'dist/ROOT.zip,epic.txt', fingerprint: true, onlyIfSuccessful: true
+      }
+    }
+  }
+}

@@ -1,0 +1,60 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+  agent none
+
+  parameters {
+    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number')
+  }
+
+  environment {
+    BRANCH_NAME = 'QC'
+  }
+
+  stages {
+    stage('Build + Scan') {
+      steps {
+        script {
+          reactBuildScan(
+            epic: params.EPIC,
+            branch: env.BRANCH_NAME,
+            lob: 'DXP',
+            buildAgent: 'built-in',
+            secretScanningAgent: 'built-in',
+            sonarAgent: 'SonarQube',
+
+            bbs: [
+              credentialsId: 'Admin_Bitbucket',
+              id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+              projectName: 'DXP',
+              repositoryName: 'DH-Sales-V3',
+              serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+            ],
+
+            app: [
+              packageFile: 'package.json'
+            ],
+
+            node: [
+              installCmd: 'set NODE_OPTIONS=--max-old-space-size=8192 && set ESBUILD_MAX_HEAP_SIZE=8192 && npm install --legacy-peer-deps',
+              buildCmd: 'npx nx build travel-insurance --configuration=development'
+            ],
+
+            artifacts: [
+              path: 'dist/apps/travel-insurance/**'
+            ],
+
+            sonar: [
+              server: 'SonarQube',
+              projectKey: 'FE-TRAVEL-INSURANCE-V3',
+              sources: 'apps/travel-insurance/src',
+              inclusions: 'apps/travel-insurance/**',
+              tsconfigPaths: 'apps/travel-insurance/tsconfig.json',
+              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map'
+            ]
+          )
+        }
+      }
+    }
+  }
+}

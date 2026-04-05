@@ -1,0 +1,26 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+    agent { label 'built-in' }
+
+    environment {
+        NEXUS_URL     = 'http://nexus.tawuniya.com/repository/rollback-packages'
+        CREDENTIAL_ID = 'nexus-upload'
+        DIR           = 'E:/Jenkins/Home/workspace/Sonarqube/BFF-AAMAL-ESERVICES-(Build+Scan)2/target/'
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+    }
+
+    stages {
+        stage('Upload WAR to Nexus') {
+            steps {
+                script {
+                    WarNexusUpload(
+                        nexusUrl: env.NEXUS_URL,
+                        credentialId: env.CREDENTIAL_ID,
+                        targetDir: env.DIR
+                    )
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,159 @@
+import jenkins.model.*
+import hudson.model.*
+import hudson.triggers.*
+import hudson.tasks.*
+import org.jenkinsci.plugins.workflow.job.WorkflowJob
+import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition
+import org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition
+import org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject
+import org.jenkinsci.plugins.workflow.multibranch.BranchJobProperty
+import jenkins.branch.BranchSource
+
+def j = Jenkins.instance
+
+// helper to print SCM info safely
+def printScm = { scm ->
+    if (scm == null) return
+    println("SCM TYPE: ${scm.class.name}")
+    // Try to print remote URL for GitSCM
+    try {
+        def remotes = scm?.userRemoteConfigs
+        if (remotes) {
+            remotes.each { r ->
+                println("SCM REMOTE: ${r.url}")
+                if (r.credentialsId) println("SCM CRED: ${r.credentialsId}")
+            }
+        }
+    } catch (ignored) {
+        // ignore if scm doesn't have userRemoteConfigs
+    }
+    // Print branch specs if exist
+    try {
+        def branches = scm?.branches
+        if (branches) branches.each { b -> println("SCM BRANCH SPEC: ${b.name}") }
+    } catch (ignored) {}
+}
+
+j.getAllItems(Job.class).each { job ->
+
+    println("\n====================================================")
+    println("NAME: ${job.fullName}")
+    println("TYPE: ${job.class.name}")
+    println("URL: ${job.absoluteUrl}")
+    println("ENABLED/BUILDABLE: ${job.isBuildable()}")
+    println("DESCRIPTION: ${job.description ?: ''}")
+
+    // Last builds
+    println("LAST BUILD: ${job.getLastBuild() ?: 'N/A'}")
+    println("LAST SUCCESS: ${job.getLastSuccessfulBuild() ?: 'N/A'}")
+    println("LAST FAILURE: ${job.getLastFailedBuild() ?: 'N/A'}")
+
+    // Triggers
+    try {
+        def triggers = job.getTriggers()
+        if (triggers && !triggers.isEmpty()) {
+            println("TRIGGERS:")
+            triggers.each { k, v -> println(" - ${v.class.name}: ${v}") }
+        } else {
+            println("TRIGGERS: none")
+        }
+    } catch (e) {
+        println("TRIGGERS: unable to read (${e.class.simpleName})")
+    }
+
+    // Parameters
+    try {
+        def paramsProp = job.getProperty(ParametersDefinitionProperty)
+        if (paramsProp?.parameterDefinitions) {
+            println("PARAMETERS:")
+            paramsProp.parameterDefinitions.each { p ->
+                println(" - ${p.name} (${p.class.name}) default=${p.defaultParameterValue ?: ''}")
+            }
+        } else {
+            println("PARAMETERS: none")
+        }
+    } catch (e) {
+        println("PARAMETERS: unable to read (${e.class.simpleName})")
+    }
+
+    // SCM / Repo / Branch info
+    println("----- SCM / SOURCE -----")
+    if (job instanceof FreeStyleProject) {
+        println("JOB KIND: Freestyle")
+        try { printScm(job.getScm()) } catch (e) { println("SCM: unable (${e.class.simpleName})") }
+    }
+    else if (job instanceof WorkflowJob) {
+        println("JOB KIND: Pipeline")
+        // 1) Pipeline definition
+        try {
+            def defn = job.getDefinition()
+            println("PIPELINE DEF TYPE: ${defn?.class?.name}")
+
+            if (defn instanceof CpsScmFlowDefinition) {
+                println("PIPELINE FROM SCM: yes (Jenkinsfile from SCM)")
+                println("SCRIPT PATH: ${defn.getScriptPath()}")
+                printScm(defn.getScm())
+            } else if (defn instanceof CpsFlowDefinition) {
+                println("PIPELINE FROM SCM: no (inline Jenkinsfile)")
+                // Print only first 25 lines to avoid huge dump
+                def script = defn.getScript()
+                def lines = script?.readLines() ?: []
+                println("JENKINSFILE (first lines):")
+                lines.take(25).eachWithIndex { l, i -> println(String.format("%02d| %s", i+1, l)) }
+                if (lines.size() > 25) println("... (${lines.size()-25} more lines)")
+            }
+        } catch (e) {
+            println("PIPELINE DEFINITION: unable (${e.class.simpleName})")
+        }
+
+        // 2) Try getSCMs() if present
+        try {
+            def scms = job.getSCMs()
+            if (scms && !scms.isEmpty()) {
+                println("JOB SCMs (getSCMs):")
+                scms.each { s -> printScm(s) }
+            }
+        } catch (ignored) {}
+        
+        // 3) If this job is a branch of Multibranch, print branch name + source
+        try {
+            def bp = job.getProperty(BranchJobProperty)
+            if (bp?.branch) {
+                println("MULTIBRANCH BRANCH: ${bp.branch.name}")
+                println("MULTIBRANCH SOURCE: ${bp.branch.sourceId}")
+            }
+        } catch (ignored) {}
+    }
+    else if (job instanceof WorkflowMultiBranchProject) {
+        println("JOB KIND: Multibranch (ROOT)")
+        try {
+            def sources = job.getSourcesList()
+            if (sources) {
+                println("BRANCH SOURCES:")
+                sources.each { src ->
+                    def s = src?.getSource()
+                    println(" - SOURCE TYPE: ${s?.class?.name}")
+                    // Some sources have "repoOwner" or "project" fields, we print toString to avoid missing fields
+                    println(" - SOURCE: ${s}")
+                }
+            }
+        } catch (e) {
+            println("BRANCH SOURCES: unable (${e.class.simpleName})")
+        }
+    }
+    else {
+        println("JOB KIND: Other (${job.class.simpleName})")
+        // Try generic SCM if exists
+        try { if (job.metaClass.respondsTo(job, "getScm")) printScm(job.getScm()) } catch (ignored) {}
+    }
+
+    // Properties (useful for inventory)
+    println("----- PROPERTIES -----")
+    try {
+        job.getAllProperties().each { p ->
+            println(" - ${p.class.name}")
+        }
+    } catch (ignored) {}
+
+    println("====================================================")
+}

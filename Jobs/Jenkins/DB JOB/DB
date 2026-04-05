@@ -1,0 +1,84 @@
+pipeline {
+    agent {
+        node {
+            label 'SonarQube'
+        }
+    }
+
+    // Trigger build automatically when a change is pushed to Bitbucket
+    triggers {
+        bitbucketPush()
+    }
+
+    parameters {
+        choice(name: 'BRANCH_NAME', choices: ['DEV', 'QC', 'UAT', 'PROD'], description: 'Select the branch to scan')
+    }
+
+    environment {
+        // Forces the scanner to use existing Java and avoid 'AccessDenied' errors on E:
+        SONAR_SCANNER_JRE_PROVISIONING = 'false'
+        SONAR_USER_HOME = 'E:\\.sonar_cache'
+    }
+
+    stages {
+        stage('Initialize & Set Build Name') {
+            steps {
+                script {
+                    // Mimics the "Set Build Name" freestyle option using the BRANCH_NAME parameter
+                    currentBuild.displayName = "#${BUILD_NUMBER}-${params.BRANCH_NAME}"
+                }
+            }
+        }
+
+        stage('Checkout SCM') {
+            steps {
+                cleanWs()
+                git(
+                    credentialsId: 'admin_bitbucket',
+                    url: 'https://bitbucket.tawn.com/scm/db/db.git',
+                    branch: "${params.BRANCH_NAME}"
+                )
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                script {
+                    withSonarQubeEnv('SonarQube') {
+                        bat """
+                          sonar-scanner ^
+                          -Dsonar.projectKey=DB_db_da4b42ae-0792-4a7f-88ba-526ab187010e ^
+                          -Dsonar.projectName=DB ^
+                          -Dsonar.sourceEncoding=UTF-8 ^
+                          -Dsonar.sources=. ^
+                          -Dsonar.language=java ^
+                          -Dsonar.java.binaries=. ^
+                          -Dsonar.branch.name=${params.BRANCH_NAME} ^
+                          -Dsonar.projectVersion=%GIT_COMMIT%-%BUILD_NUMBER% ^
+                          -Dsonar.scanner.skip.ssl.verification=true ^
+                          -Dsonar.nodejs.executable="C:\\Program Files\\nodejs\\node.exe"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    // Post-build Quality Action: Wait for SonarQube results
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SonarQube analysis completed and Quality Gate passed for ${params.BRANCH_NAME}."
+        }
+        failure {
+            echo "Pipeline failed. Check the SonarQube background tasks or the Jenkins console output."
+        }
+    }
+}

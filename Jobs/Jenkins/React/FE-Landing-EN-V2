@@ -1,0 +1,229 @@
+pipeline {
+  agent none
+
+  parameters {
+    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number')
+  }
+
+  environment {
+    BRANCH_NAME = 'PROD-EN'
+    REPO_NAME   = 'DH-Landing-V2'
+    PROJECT_KEY = 'DXP-FE-Landing-EN-V2'
+    LOB         = 'DXP'
+  }
+
+  stages {
+    stage('Checkout') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        bbs_checkout(
+          branches: [[name: "*/${env.BRANCH_NAME}"]],
+          credentialsId: 'Admin_Bitbucket',
+          id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+          projectName: 'DXP',
+          repositoryName: 'DH-Landing-V2',
+          serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+        )
+      }
+    }
+
+    stage('Generate Release Name') {
+      agent { label 'built-in' }
+      steps {
+        script {
+          String releaseNumber = env.BUILD_NUMBER.toString().trim()
+          String lob           = env.LOB.toString().trim().toUpperCase()
+          String environment   = 'PROD'
+          String packageFile   = 'frontend/package.json'
+
+          def allowedEnvs = ['DEV', 'QC', 'UAT', 'PREPROD', 'PROD']
+          def allowedLobs = ['DXP', 'CXP']
+
+          if (!allowedEnvs.contains(environment)) {
+            error("Invalid environment '${environment}'. Allowed: ${allowedEnvs}")
+          }
+
+          if (!allowedLobs.contains(lob)) {
+            error("Invalid LOB '${lob}'. Allowed: ${allowedLobs}")
+          }
+
+          if (!fileExists(packageFile)) {
+            error("package.json file not found: ${packageFile}")
+          }
+
+          def pkg = readJSON file: packageFile
+
+          if (!pkg?.version) {
+            error("Version not found in ${packageFile}")
+          }
+
+          String appVersion      = pkg.version.toString().trim().replace('-SNAPSHOT', '')
+          String versionTag      = "v${appVersion}"
+          String artifactVersion = "R${releaseNumber}-${lob}-${versionTag}-${environment}"
+
+          if (!(artifactVersion ==~ /^R\d+-(DXP|CXP)-v\d+\.\d+\.\d+-(DEV|QC|UAT|PREPROD|PROD)$/)) {
+            error("Invalid artifact version format: ${artifactVersion}")
+          }
+
+          env.APP_VERSION = appVersion
+          env.ARTIFACT_VERSION = artifactVersion
+
+          echo "APP_VERSION=${env.APP_VERSION}"
+          echo "ARTIFACT_VERSION=${env.ARTIFACT_VERSION}"
+        }
+      }
+    }
+
+    stage('Set Build Name') {
+      agent { label 'built-in' }
+      steps {
+        script {
+          currentBuild.displayName = "${params.EPIC} ⇔ ${env.ARTIFACT_VERSION}"
+          currentBuild.description = "Branch: ${env.BRANCH_NAME} | Build: #${env.BUILD_NUMBER} | Repo: ${env.REPO_NAME} | Release: ${env.ARTIFACT_VERSION}"
+        }
+      }
+    }
+
+    stage('Copy Configuration') {
+      agent { label 'built-in' }
+      steps {
+        bat """
+        if not exist "E:\\Jenkins\\Home\\workspace\\Digital Experience Platforms\\Configuration\\PROD\\dh-landing-v2" (
+          echo Configuration path not found
+          exit /b 1
+        )
+
+        robocopy "E:\\Jenkins\\Home\\workspace\\Digital Experience Platforms\\Configuration\\PROD\\dh-landing-v2" "%WORKSPACE%" /E /J /COPY:DATS /MT:1 /IS /IT /IM /X /V /NP /NODCOPY /XD .*
+        if %ERRORLEVEL% LEQ 7 exit /b 0
+        exit /b %ERRORLEVEL%
+        """
+      }
+    }
+
+    stage('Install') {
+      agent { label 'built-in' }
+      steps {
+        bat '''
+        cd frontend
+        if not exist package.json (
+          echo package.json not found in %CD%
+          dir
+          exit /b 1
+        )
+        npm install --legacy-peer-deps
+        '''
+      }
+    }
+
+    stage('Build') {
+      agent { label 'built-in' }
+      steps {
+        bat '''
+        cd frontend
+        set NODE_OPTIONS=--openssl-legacy-provider
+        npm run build:prod
+        '''
+      }
+    }
+
+    stage('Package Zip') {
+      agent { label 'built-in' }
+      steps {
+        bat '''
+        @echo off
+        cd frontend\\build
+
+        if exist "en.zip" (
+            del "en.zip"
+            echo en.zip has been removed.
+        ) else (
+            echo en.zip does not exist.
+        )
+
+        7z a -tzip en.zip .
+        if errorlevel 1 exit /b %ERRORLEVEL%
+
+        echo en.zip has been created from the build folder.
+        '''
+      }
+    }
+
+    stage('Prepare for Sonar') {
+      agent { label 'built-in' }
+      steps {
+        stash name: 'sonar-src',
+              includes: '''
+frontend/src/**,
+frontend/tsconfig*.json,
+package.json,
+package-lock.json,
+tsconfig*.json,
+sonar-project.properties
+'''.trim(),
+              excludes: '''
+**/node_modules/**,
+**/build/**,
+**/dist/**,
+**/coverage/**,
+**/.git/**
+'''.trim()
+
+        stash name: 'build-artifact', includes: 'frontend/build/en.zip'
+      }
+    }
+
+    stage('SonarQube Analysis') {
+      agent { label 'SonarQube' }
+      steps {
+        deleteDir()
+        unstash 'sonar-src'
+
+        script {
+          def nodeHome = tool 'NodeJS'
+          def scannerHome = tool 'sonar-scanner-cli'
+
+          env.NODE_HOME = nodeHome
+          env.PATH = "${nodeHome};${nodeHome}\\node_modules\\npm\\bin;${scannerHome}\\bin;${env.PATH}"
+
+          withSonarQubeEnv('SonarQube') {
+            bat """
+            "${scannerHome}\\bin\\sonar-scanner.bat" ^
+            -Dsonar.projectKey=${env.PROJECT_KEY} ^
+            -Dsonar.projectName=${env.PROJECT_KEY} ^
+            -Dsonar.projectVersion=${env.ARTIFACT_VERSION} ^
+            -Dsonar.sources=frontend\\src ^
+            -Dsonar.inclusions=frontend\\src\\** ^
+            -Dsonar.sourceEncoding=UTF-8 ^
+            -Dsonar.branch.name=${env.BRANCH_NAME} ^
+            -Dsonar.exclusions=**\\*.spec.ts,**\\*.spec.tsx,**\\*.test.ts,**\\*.test.tsx,**\\node_modules\\**,**\\build\\**,**\\dist\\** ^
+            -Dsonar.scanner.skip.ssl.verification=true ^
+            -Dsonar.nodejs.executable="${nodeHome}\\node.exe"
+            """
+          }
+        }
+      }
+    }
+
+    
+    stage('Quality Gate') {
+      agent { label 'SonarQube' }
+      steps {
+        timeout(time: 1, unit: 'HOURS') {
+          waitForQualityGate abortPipeline: true
+        }
+      }
+    }
+    
+
+    stage('Archive Artifacts') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        unstash 'build-artifact'
+        writeFile file: 'epic.txt', text: params.EPIC
+        archiveArtifacts artifacts: 'frontend/build/en.zip,epic.txt', fingerprint: true, onlyIfSuccessful: true
+      }
+    }
+  }
+}

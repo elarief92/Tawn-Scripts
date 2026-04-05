@@ -1,0 +1,64 @@
+pipeline {
+    agent { label 'built-in' }
+
+    environment {
+        NEXUS_URL      = 'http://nexus.tawuniya.com/repository/rollback-packages'
+        CREDENTIAL_ID  = 'nexus-upload'
+        PACKAGE_NAME   = 'aamal-R31-DXP-v1.0.0-DEV'
+        DIR            = 'E:/Jenkins/Home/workspace/Sonarqube/BFF-AAMAL-ESERVICES-(Build+Scan)2/target/'
+        BUILD_TIMESTAMP = getCurrentTimestamp()
+    }
+
+    stages {
+        stage('Check WAR File') {
+            steps {
+                script {
+                    retry(3) {
+                        try {
+                            dir("${env.DIR}") {
+                                bat "if not exist ${env.PACKAGE_NAME}.war exit /b 1"
+                            }
+                            echo "WAR file found successfully."
+                        } catch (Exception e) {
+                            echo "WAR file not found, retrying..."
+                            sleep(time: 1, unit: 'MINUTES')
+                            throw e
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Upload WAR to Nexus') {
+            steps {
+                script {
+                    retry(3) {
+                        try {
+                            withCredentials([usernamePassword(
+                                credentialsId: "${CREDENTIAL_ID}",
+                                usernameVariable: 'NEXUS_USERNAME',
+                                passwordVariable: 'NEXUS_PASSWORD'
+                            )]) {
+                                dir("${env.DIR}") {
+                                    bat """
+                                        curl --fail -v -u %NEXUS_USERNAME%:%NEXUS_PASSWORD% --upload-file ${env.PACKAGE_NAME}.war ${env.NEXUS_URL}/${JOB_BASE_NAME}/${env.PACKAGE_NAME}.war
+                                    """
+                                }
+                            }
+                            echo "Uploaded ${env.PACKAGE_NAME}.war to Nexus repository."
+                        } catch (Exception e) {
+                            echo "Failed to upload WAR file, retrying..."
+                            sleep(time: 1, unit: 'MINUTES')
+                            throw e
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+def getCurrentTimestamp() {
+    def dateTime = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(3)
+    return dateTime.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH-mm-ss"))
+}
