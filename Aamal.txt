@@ -1,0 +1,98 @@
+pipeline {
+  agent none
+
+  parameters {
+    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number (optional)')
+    string(name: 'BRANCH_NAME', defaultValue: 'DEV', description: 'Branch name for SonarQube (default DEV)')
+  }
+
+  stages {
+
+    stage('Set Build Name') {
+      agent { label 'built-in' }
+      steps {
+        script {
+          currentBuild.displayName = "${params.EPIC}"
+        }
+      }
+    }
+
+    stage('Checkout (DEV)') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        bbs_checkout branches: [[name: '*/DEV']],
+          credentialsId: 'Admin_Bitbucket',
+          id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+          projectName: 'DXP',
+          repositoryName: 'BFF-ESERVICES',
+          serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+
+        stash name: 'src', includes: '**/*'
+      }
+    }
+
+    stage('Build') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        unstash 'src'
+
+        bat """
+        @ECHO OFF
+        echo EPIC Number: %EPIC%
+        git init
+        git checkout DEV
+        git pull https://bitbucket.tawn.com/scm/dxp/bff-eservices.git DEV
+
+        mvn -Dmaven.compiler.fork=true -Dmaven.compiler.executable="C:\\Program Files\\Java\\jdk-1.8\\bin\\javac.exe" clean package -Denvironment=dev -DapplicationName=aamal -DlogDirectory="/u01/Logs"
+
+        exit /b 0
+        """
+
+        // include compiled output for Sonar (target/classes)
+        stash name: 'workspace_for_sonar', includes: '**/*'
+      }
+    }
+
+    stage('SonarQube Analysis') {
+      agent { label 'SonarQube' }
+      steps {
+        deleteDir()
+        unstash 'workspace_for_sonar'
+
+        script {
+          withSonarQubeEnv('SonarQube') {
+            bat """
+              sonar-scanner ^
+              -Dsonar.projectKey=BFF-AAMAL-ESERVICES ^
+              -Dsonar.projectName=BFF-AAMAL-ESERVICES-${params.BRANCH_NAME} ^
+              -Dsonar.sources=src/main/java ^
+              -Dsonar.sourceEncoding=UTF-8 ^
+              -Dsonar.branch.name=${params.BRANCH_NAME} ^
+              -Dsonar.java.binaries=target/classes ^
+              -Dsonar.projectVersion=%BUILD_NUMBER% ^
+              -Dsonar.scanner.skip.ssl.verification=true ^
+              -Dsonar.nodejs.executable="C:\\Program Files\\nodejs\\node.exe"
+            """
+          }
+        }
+      }
+    }
+
+    stage('Quality Gate') {
+      agent { label 'SonarQube' }
+      steps {
+        timeout(time: 1, unit: 'HOURS') {
+          waitForQualityGate abortPipeline: true
+        }
+      }
+    }
+  }
+
+  post {
+    failure {
+      echo "Pipeline failed. Check SonarQube logs or SSL configuration."
+    }
+  }
+}
