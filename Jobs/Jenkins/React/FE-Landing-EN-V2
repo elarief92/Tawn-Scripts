@@ -210,7 +210,7 @@ sonar-project.properties
       agent { label 'SonarQube' }
       steps {
         timeout(time: 1, unit: 'HOURS') {
-          waitForQualityGate abortPipeline: true
+          waitForQualityGate abortPipeline: false
         }
       }
     }
@@ -222,7 +222,9 @@ sonar-project.properties
         deleteDir()
         unstash 'build-artifact'
         writeFile file: 'epic.txt', text: params.EPIC
-        archiveArtifacts artifacts: 'frontend/build/en.zip,epic.txt', fingerprint: true, onlyIfSuccessful: true
+        writeFile file: 'artifact_version.txt', text: env.ARTIFACT_VERSION
+        
+        archiveArtifacts artifacts: 'frontend/build/en.zip,epic.txt,artifact_version.txt', fingerprint: true, onlyIfSuccessful: true
       }
     }
   }

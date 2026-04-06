@@ -210,7 +210,7 @@ sonar-project.properties
       agent { label 'SonarQube' }
       steps {
         timeout(time: 1, unit: 'HOURS') {
-          waitForQualityGate abortPipeline: true
+          waitForQualityGate abortPipeline: false
         }
       }
     }

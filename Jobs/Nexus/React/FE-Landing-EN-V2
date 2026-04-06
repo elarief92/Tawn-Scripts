@@ -1,0 +1,99 @@
+pipeline {
+    agent { label 'built-in' }
+
+    environment {
+        SOURCE_JOB       = 'FE-Landing-EN-V2'
+        ZIP_PATH         = 'frontend/build/en.zip'
+        VERSION_FILE     = 'artifact_version.txt'
+        NEXUS_URL        = 'http://nexus.tawuniya.com/repository/rollback-packages'
+        CREDENTIAL_ID    = 'nexus-upload'
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+    }
+
+    stages {
+
+        stage('Copy Artifacts') {
+            steps {
+                deleteDir()
+
+                copyArtifacts(
+                    projectName: env.SOURCE_JOB,
+                    selector: lastSuccessful(),
+                    filter: "${env.ZIP_PATH},${env.VERSION_FILE}",
+                    fingerprintArtifacts: true
+                )
+            }
+        }
+
+        stage('Upload to Nexus') {
+            steps {
+                script {
+
+                    if (!fileExists(env.ZIP_PATH)) {
+                        error "ZIP file not found: ${env.ZIP_PATH}"
+                    }
+
+                    if (!fileExists(env.VERSION_FILE)) {
+                        error "artifact_version.txt not found."
+                    }
+
+                    def artifactVersion = readFile(env.VERSION_FILE).trim()
+                    def safeSourceJob   = env.SOURCE_JOB.replaceAll('/', '-')
+                    def uploadedFileName = "${safeSourceJob}-${artifactVersion}.zip"
+
+                    env.UPLOADED_FILE = uploadedFileName
+
+                    echo "Uploading file as: ${uploadedFileName}"
+
+                    retry(3) {
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: env.CREDENTIAL_ID,
+                                usernameVariable: 'NEXUS_USERNAME',
+                                passwordVariable: 'NEXUS_PASSWORD'
+                            )
+                        ]) {
+                            bat """
+                                curl --fail -u %NEXUS_USERNAME%:%NEXUS_PASSWORD% --upload-file "${env.ZIP_PATH}" "${env.NEXUS_URL}/${env.JOB_BASE_NAME}/${uploadedFileName}"
+                            """
+                        }
+                    }
+
+                    echo "Upload successful."
+                }
+            }
+        }
+    }
+
+    post {
+
+        success {
+            emailext(
+                subject: "✅ Nexus Upload Successful - ${env.JOB_BASE_NAME}",
+                body: """
+                <h3 style="color:green;">Nexus Upload Completed Successfully</h3>
+                <p><b>Job:</b> ${env.JOB_NAME}</p>
+                <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                <p><b>Uploaded File:</b> ${env.UPLOADED_FILE}</p>
+                <p><b>Uploaded To:</b> ${env.NEXUS_URL}/${env.JOB_BASE_NAME}/${env.UPLOADED_FILE}</p>
+                """,
+                to: "${env.EMAIL_RECIPIENTS}",
+                mimeType: 'text/html'
+            )
+        }
+
+        failure {
+            emailext(
+                subject: "❌ Nexus Upload Failed - ${env.JOB_BASE_NAME}",
+                body: """
+                <h3 style="color:red;">Nexus Upload Failed</h3>
+                <p><b>Job:</b> ${env.JOB_NAME}</p>
+                <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                <p>Please check Jenkins console logs.</p>
+                """,
+                to: "${env.EMAIL_RECIPIENTS}",
+                mimeType: 'text/html'
+            )
+        }
+    }
+}
