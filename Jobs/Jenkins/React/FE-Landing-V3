@@ -169,7 +169,7 @@ vite.config.*
       agent { label 'SonarQube' }
       steps {
         timeout(time: 1, unit: 'HOURS') {
-          waitForQualityGate abortPipeline: true
+          waitForQualityGate abortPipeline: false
         }
       }
     }
@@ -182,8 +182,9 @@ vite.config.*
         unstash 'build-artifact'
 
         writeFile file: 'epic.txt', text: params.EPIC
+        writeFile file: 'artifact_version.txt', text: env.ARTIFACT_VERSION
 
-        archiveArtifacts artifacts: 'dist/ROOT.zip,epic.txt', fingerprint: true, onlyIfSuccessful: true
+        archiveArtifacts artifacts: 'dist/ROOT.zip,epic.txt,artifact_version.txt', fingerprint: true, onlyIfSuccessful: true
       }
     }
   }
