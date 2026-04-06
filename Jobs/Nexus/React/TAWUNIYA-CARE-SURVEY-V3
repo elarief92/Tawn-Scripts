@@ -7,21 +7,23 @@ pipeline {
     environment {
         NEXUS_URL        = 'http://nexus.tawuniya.com/repository/rollback-packages'
         CREDENTIAL_ID    = 'nexus-upload'
-        SOURCE_JOB       = 'Sonarqube/tawn/TAWUNIYA-CARE-SURVEY-V3'
-        PACKAGE_NAME     = 'tawuniya-care-survey'
+        SOURCE_JOB_NAME  = 'TAWUNIYA-CARE-SURVEY-V3'
+        SOURCE_JOB_PATH  = 'Sonarqube/tawn/TAWUNIYA-CARE-SURVEY-V3'
+        BUILD_FOLDER     = 'dist/apps/tawuniya-care-survey'
         EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
     }
 
     stages {
 
-        stage('Zip and Upload React Build to Nexus') {
+        stage('Upload to Nexus') {
             steps {
                 script {
                     ReactNexusUpload(
                         nexusUrl: env.NEXUS_URL,
                         credentialId: env.CREDENTIAL_ID,
-                        sourceJob: env.SOURCE_JOB,
-                        packageName: env.PACKAGE_NAME
+                        sourceJobName: env.SOURCE_JOB_NAME,
+                        sourceJobPath: env.SOURCE_JOB_PATH,
+                        buildFolder: env.BUILD_FOLDER
                     )
                 }
             }

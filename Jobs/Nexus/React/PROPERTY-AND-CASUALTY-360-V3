@@ -7,21 +7,23 @@ pipeline {
     environment {
         NEXUS_URL        = 'http://nexus.tawuniya.com/repository/rollback-packages'
         CREDENTIAL_ID    = 'nexus-upload'
-        SOURCE_JOB       = 'Sonarqube/tawn/PROPERTY-AND-CASUALTY-360-V3'
-        PACKAGE_NAME     = 'property-and-casualty-360'
+        SOURCE_JOB_NAME  = 'PROPERTY-AND-CASUALTY-360-V3'
+        SOURCE_JOB_PATH  = 'Sonarqube/tawn/PROPERTY-AND-CASUALTY-360-V3'
+        BUILD_FOLDER     = 'dist/apps/property-and-casualty-360'
         EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
     }
 
     stages {
 
-        stage('Zip and Upload React Build to Nexus') {
+        stage('Upload to Nexus') {
             steps {
                 script {
                     ReactNexusUpload(
                         nexusUrl: env.NEXUS_URL,
                         credentialId: env.CREDENTIAL_ID,
-                        sourceJob: env.SOURCE_JOB,
-                        packageName: env.PACKAGE_NAME
+                        sourceJobName: env.SOURCE_JOB_NAME,
+                        sourceJobPath: env.SOURCE_JOB_PATH,
+                        buildFolder: env.BUILD_FOLDER
                     )
                 }
             }
