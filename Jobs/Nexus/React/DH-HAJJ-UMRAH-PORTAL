@@ -1,0 +1,32 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+
+    agent { label 'built-in' }
+
+    environment {
+        NEXUS_URL        = 'http://nexus.tawuniya.com/repository/rollback-packages'
+        CREDENTIAL_ID    = 'nexus-upload'
+        SOURCE_JOB_NAME  = 'DH-HAJJ-UMRAH-PORTAL'
+        SOURCE_JOB_PATH  = 'Sonarqube/tawn/DH-HAJJ-UMRAH-PORTAL'
+        BUILD_FOLDER     = '.next'
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+    }
+
+    stages {
+
+        stage('Upload to Nexus') {
+            steps {
+                script {
+                    ReactNexusUpload(
+                        nexusUrl: env.NEXUS_URL,
+                        credentialId: env.CREDENTIAL_ID,
+                        sourceJobName: env.SOURCE_JOB_NAME,
+                        sourceJobPath: env.SOURCE_JOB_PATH,
+                        buildFolder: env.BUILD_FOLDER
+                    )
+                }
+            }
+        }
+    }
+}
