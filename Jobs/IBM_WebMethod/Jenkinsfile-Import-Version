@@ -1,0 +1,137 @@
+pipeline {
+    agent { label 'built-in' }
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    parameters {
+        string(name: 'EPIC_NAME', defaultValue: '', description: 'EPIC name. Example: DEV25-10599')
+        string(name: 'COMPONENT_NAME', defaultValue: '', description: 'Component name. Example: Required_APP')
+        string(name: 'ZIP_FILE', defaultValue: '', description: 'ZIP file name under Source\\EPIC_NAME. Example: pq__DEV2510599_9ma_ExportedBuild_DEV25-10599.zip')
+    }
+
+    environment {
+        UCD_WEBURL   = 'http://ucdserver:8080'
+        UCD_USERNAME = 'admin'
+        UCD_PASSWORD = 'admin'
+        UDCLIENT     = 'C:\\IBM\\udclient\\udclient.cmd'
+    }
+
+    stages {
+        stage('Initialize Variables') {
+            steps {
+                script {
+                    if (!params.EPIC_NAME?.trim()) {
+                        error('EPIC_NAME is required')
+                    }
+                    if (!params.COMPONENT_NAME?.trim()) {
+                        error('COMPONENT_NAME is required')
+                    }
+                    if (!params.ZIP_FILE?.trim()) {
+                        error('ZIP_FILE is required')
+                    }
+
+                    env.EPIC_NAME      = params.EPIC_NAME.trim()
+                    env.COMPONENT_NAME = params.COMPONENT_NAME.trim()
+                    env.ZIP_FILE       = params.ZIP_FILE.trim()
+
+                    env.BRANCH_NAME  = "feature/${env.EPIC_NAME}"
+                    env.ZIP_REL_PATH = "Source\\${env.EPIC_NAME}\\${env.ZIP_FILE}"
+                    env.VERSION_NAME = env.EPIC_NAME
+                    env.EXTRACT_DIR  = "${env.WORKSPACE}\\wm-extract\\${env.COMPONENT_NAME}-${env.EPIC_NAME}"
+
+                    currentBuild.displayName = "${env.COMPONENT_NAME}-${env.EPIC_NAME}-IMPORT"
+                    currentBuild.description = "Branch=${env.BRANCH_NAME}, ZIP=${env.ZIP_REL_PATH}, Component=${env.COMPONENT_NAME}"
+
+                    echo "BRANCH_NAME=${env.BRANCH_NAME}"
+                    echo "ZIP_REL_PATH=${env.ZIP_REL_PATH}"
+                    echo "VERSION_NAME=${env.VERSION_NAME}"
+                    echo "EXTRACT_DIR=${env.EXTRACT_DIR}"
+                }
+            }
+        }
+
+        stage('Checkout Package from Bitbucket') {
+            steps {
+                deleteDir()
+                bbs_checkout(
+                    branches: [[name: "${env.BRANCH_NAME}"]],
+                    credentialsId: 'Admin_Bitbucket',
+                    id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+                    projectName: 'EL',
+                    repositoryName: 'softwareAG-webmethods',
+                    serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+                )
+            }
+        }
+
+        stage('Validate ZIP') {
+            steps {
+                bat """
+                if not exist "%WORKSPACE%\\${ZIP_REL_PATH}" (
+                    echo ERROR: ZIP package not found: %WORKSPACE%\\${ZIP_REL_PATH}
+                    echo Listing files under Source:
+                    if exist "%WORKSPACE%\\Source" dir "%WORKSPACE%\\Source" /s /b
+                    exit /b 1
+                )
+                """
+            }
+        }
+
+        stage('Prepare Extraction Folder') {
+            steps {
+                bat """
+                if not exist "%WORKSPACE%\\wm-extract" mkdir "%WORKSPACE%\\wm-extract"
+                if exist "${EXTRACT_DIR}" rmdir /s /q "${EXTRACT_DIR}"
+                mkdir "${EXTRACT_DIR}"
+                """
+            }
+        }
+
+        stage('Extract ZIP') {
+            steps {
+                bat """
+                powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path '%WORKSPACE%\\${ZIP_REL_PATH}' -DestinationPath '${EXTRACT_DIR}' -Force"
+                """
+            }
+        }
+
+        stage('Create Version') {
+            steps {
+                bat """
+                "${UDCLIENT}" -weburl "${UCD_WEBURL}" -username "${UCD_USERNAME}" -password "${UCD_PASSWORD}" createVersion -component "${COMPONENT_NAME}" -name "${VERSION_NAME}"
+                """
+            }
+        }
+
+        stage('Add Version Files') {
+            steps {
+                bat """
+                "${UDCLIENT}" -weburl "${UCD_WEBURL}" -username "${UCD_USERNAME}" -password "${UCD_PASSWORD}" addVersionFiles -component "${COMPONENT_NAME}" -version "${VERSION_NAME}" -base "${EXTRACT_DIR}"
+                """
+            }
+        }
+
+        stage('Finish Importing') {
+            steps {
+                bat """
+                "${UDCLIENT}" -weburl "${UCD_WEBURL}" -username "${UCD_USERNAME}" -password "${UCD_PASSWORD}" finishedImporting -component "${COMPONENT_NAME}" -version "${VERSION_NAME}"
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: Imported component ${env.COMPONENT_NAME} version ${env.VERSION_NAME} using ${env.ZIP_FILE}"
+        }
+        failure {
+            echo "FAILED: Import version job failed"
+        }
+        always {
+            archiveArtifacts artifacts: '**/*.log', allowEmptyArchive: true
+        }
+    }
+}
