@@ -1,0 +1,258 @@
+pipeline {
+    agent { label 'built-in' }
+
+    options {
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    parameters {
+        string(name: 'EPIC_NAME', defaultValue: '', description: 'Required. Used as Deployer Project / Candidate base name, e.g. EPIC-1234')
+        string(name: 'BRANCH_NAME', defaultValue: 'master', description: 'Git branch to checkout')
+        string(name: 'PACKAGES_TO_BUILD', defaultValue: 'TawnMotorNonRetail,TawnSMESalesCRM', description: 'Comma-separated package names under packages/')
+        choice(name: 'TARGET_SCOPE', choices: ['QC_APP01', 'QC_APP02', 'QC_APP03', 'QC_ALL'], description: 'Select the allowed target scope')
+    }
+
+    environment {
+        SAG_HOME = 'C:\\SoftwareAG'
+        ABE_BIN = "${SAG_HOME}\\common\\AssetBuildEnvironment\\bin"
+
+        DEPLOYER_BIN = 'C:\\SoftwareAG\\IntegrationServer\\instances\\default\\packages\\WmDeployer\\bin'
+        DEPLOYER_HOST = 'localhost'
+        DEPLOYER_PORT = '5555'
+
+        TEMP_SRC = "${WORKSPACE}\\.tmp_build_src"
+        BUILD_OUTPUT_DIR = "${WORKSPACE}\\build_output"
+        GENERATED_XML = "${WORKSPACE}\\generated\\Deployment_ProjectAutomator.xml"
+        TEMPLATE_XML = "${WORKSPACE}\\deployer\\templates\\Deployment_ProjectAutomator.template.xml"
+    }
+
+    stages {
+        stage('Validate Inputs') {
+            steps {
+                script {
+                    if (!params.EPIC_NAME?.trim()) {
+                        error("EPIC_NAME is required.")
+                    }
+
+                    def selectedPackages = getSelectedPackages(params.PACKAGES_TO_BUILD)
+                    if (selectedPackages.isEmpty()) {
+                        error("PACKAGES_TO_BUILD cannot be empty.")
+                    }
+
+                    def names = buildNames(params.EPIC_NAME, params.TARGET_SCOPE)
+
+                    echo "Project Name     : ${names.PROJECT_NAME}"
+                    echo "Candidate Name   : ${names.DC_NAME}"
+                    echo "Map Name         : ${names.MAP_NAME}"
+                    echo "Target Scope     : ${params.TARGET_SCOPE}"
+                    echo "Target Server Ref: ${names.TARGET_SERVER_NAME}"
+                    echo "Branch           : ${params.BRANCH_NAME}"
+                    echo "Packages         : ${selectedPackages.join(',')}"
+                }
+            }
+        }
+
+        stage('Checkout Repo') {
+            steps {
+                deleteDir()
+
+                bbs_checkout(
+                    branches: [[name: "${params.BRANCH_NAME}"]],
+                    credentialsId: 'Admin_Bitbucket',
+                    id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+                    projectName: 'JIRA',
+                    repositoryName: 'sag',
+                    serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+                )
+            }
+        }
+
+        stage('Validate Package Paths') {
+            steps {
+                script {
+                    def selectedPackages = getSelectedPackages(params.PACKAGES_TO_BUILD)
+
+                    for (pkg in selectedPackages) {
+                        if (!fileExists("packages/${pkg}")) {
+                            error("Package not found: packages/${pkg}")
+                        }
+                    }
+
+                    if (!fileExists("deployer/templates/Deployment_ProjectAutomator.template.xml")) {
+                        error("Template XML not found: deployer/templates/Deployment_ProjectAutomator.template.xml")
+                    }
+                }
+            }
+        }
+
+        stage('Prepare Temp Build Source') {
+            steps {
+                bat """
+                    @echo off
+                    if exist "${env.TEMP_SRC}" rmdir /s /q "${env.TEMP_SRC}"
+                    if exist "${env.BUILD_OUTPUT_DIR}" rmdir /s /q "${env.BUILD_OUTPUT_DIR}"
+                    if exist "${WORKSPACE}\\generated" rmdir /s /q "${WORKSPACE}\\generated"
+
+                    mkdir "${env.TEMP_SRC}"
+                    mkdir "${env.BUILD_OUTPUT_DIR}"
+                    mkdir "${WORKSPACE}\\generated"
+                """
+
+                script {
+                    def selectedPackages = getSelectedPackages(params.PACKAGES_TO_BUILD)
+
+                    for (pkg in selectedPackages) {
+                        bat """
+                            @echo off
+                            if not exist "${WORKSPACE}\\packages\\${pkg}" (
+                                echo Package not found: ${WORKSPACE}\\packages\\${pkg}
+                                exit /b 1
+                            )
+
+                            if not exist "${env.TEMP_SRC}\\${pkg}" mkdir "${env.TEMP_SRC}\\${pkg}"
+
+                            xcopy "${WORKSPACE}\\packages\\${pkg}\\*" "${env.TEMP_SRC}\\${pkg}\\" /E /I /Y >nul
+                            if errorlevel 1 exit /b 1
+                        """
+                    }
+                }
+
+            }
+        }
+
+        /*
+        stage('ABE Build') {
+            steps {
+                bat """
+                    @echo off
+                    if not exist "${env.ABE_BIN}\\build.bat" (
+                        echo ABE build.bat not found at: ${env.ABE_BIN}\\build.bat
+                        exit /b 1
+                    )
+
+                    cd /d "${env.ABE_BIN}"
+
+                    call build.bat ^
+                      -Dbuild.source.dir="${env.TEMP_SRC}" ^
+                      -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" ^
+                      -Denable.build.IS=true
+
+                    if errorlevel 1 exit /b 1
+                """
+            }
+        }
+        */
+
+        stage('Generate Define and Map XML') {
+            steps {
+                script {
+                    def names = buildNames(params.EPIC_NAME, params.TARGET_SCOPE)
+
+                    if (!fileExists("deployer/templates/Deployment_ProjectAutomator.template.xml")) {
+                        error("Template XML not found: deployer/templates/Deployment_ProjectAutomator.template.xml")
+                    }
+
+                    def xml = readFile(file: 'deployer/templates/Deployment_ProjectAutomator.template.xml', encoding: 'UTF-8')
+                    xml = xml.replace('@PROJECT_NAME@', names.PROJECT_NAME)
+                    xml = xml.replace('@DC_NAME@', names.DC_NAME)
+                    xml = xml.replace('@MAP_NAME@', names.MAP_NAME)
+                    xml = xml.replace('@TARGET_SERVER_NAME@', names.TARGET_SERVER_NAME)
+                    xml = xml.replace('@BUILD_OUTPUT_DIR@', env.BUILD_OUTPUT_DIR ?: '')
+
+                    writeFile(file: 'generated/Deployment_ProjectAutomator.xml', text: xml, encoding: 'UTF-8')
+
+                    echo '===== Generated XML ====='
+                    echo readFile(file: 'generated/Deployment_ProjectAutomator.xml', encoding: 'UTF-8')
+                }
+            }
+        }
+
+        /*
+        stage('Define Project and Map in Deployer') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'deployer-creds', usernameVariable: 'DEP_USER', passwordVariable: 'DEP_PWD')]) {
+                    bat """
+                        @echo off
+                        if not exist "${env.DEPLOYER_BIN}\\projectautomator.bat" (
+                            echo projectautomator.bat not found at: ${env.DEPLOYER_BIN}\\projectautomator.bat
+                            exit /b 1
+                        )
+
+                        cd /d "${env.DEPLOYER_BIN}"
+                        call projectautomator.bat "${env.GENERATED_XML}"
+
+                        if errorlevel 1 exit /b 1
+                    """
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'deployer-creds', usernameVariable: 'DEP_USER', passwordVariable: 'DEP_PWD')]) {
+                    bat """
+                        @echo off
+                        if not exist "${env.DEPLOYER_BIN}\\Deployer.bat" (
+                            echo Deployer.bat not found at: ${env.DEPLOYER_BIN}\\Deployer.bat
+                            exit /b 1
+                        )
+
+                        cd /d "${env.DEPLOYER_BIN}"
+
+                        call Deployer.bat --deploy ^
+                          -dc "${buildNames(params.EPIC_NAME, params.TARGET_SCOPE).DC_NAME}" ^
+                          -project "${buildNames(params.EPIC_NAME, params.TARGET_SCOPE).PROJECT_NAME}" ^
+                          -host "${env.DEPLOYER_HOST}" ^
+                          -port "${env.DEPLOYER_PORT}" ^
+                          -user "%DEP_USER%" ^
+                          -pwd "%DEP_PWD%"
+
+                        if errorlevel 1 exit /b 1
+                    """
+                }
+            }
+        }
+        */
+
+        stage('Archive XML Only') {
+            steps {
+                archiveArtifacts artifacts: 'generated/*.xml', allowEmptyArchive: false
+            }
+        }
+    }
+
+
+}
+
+def getSelectedPackages(String packagesToBuild) {
+    return packagesToBuild
+        .split(',')
+        .collect { it.trim() }
+        .findAll { it }
+}
+
+def buildNames(String epicName, String targetScope) {
+    def projectName = "${epicName}_${targetScope}"
+    return [
+        PROJECT_NAME      : projectName,
+        DC_NAME           : projectName,
+        MAP_NAME          : "${projectName}_MAP",
+        TARGET_SERVER_NAME: resolveTarget(targetScope)
+    ]
+}
+
+String resolveTarget(String scope) {
+    def targets = [
+        'QC_APP01': 'QC_APP01',
+        'QC_APP02': 'QC_APP02',
+        'QC_APP03': 'QC_APP03',
+        'QC_ALL'  : 'QC_GROUP_ALL'
+    ]
+
+    if (!targets.containsKey(scope)) {
+        error("Unsupported TARGET_SCOPE: ${scope}")
+    }
+
+    return targets[scope]
+}

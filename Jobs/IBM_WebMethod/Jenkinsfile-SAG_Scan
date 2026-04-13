@@ -1,0 +1,160 @@
+pipeline {
+    agent none
+
+    options {
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        string(
+            name: 'BRANCH_NAME',
+            defaultValue: 'master',
+            description: 'Bitbucket branch to scan'
+        )
+
+        text(
+            name: 'SELECTED_PACKAGES',
+            defaultValue: '',
+            description: 'Enter actual package names separated by commas (not used in Sonar)'
+        )
+
+        string(
+            name: 'EPIC_NAME',
+            defaultValue: 'DEFAULT',
+            description: 'Enter EPIC Name'
+        )
+    }
+
+    environment {
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+    }
+
+    stages {
+
+        stage('Checkout Repo') {
+            agent { label 'built-in' }
+
+            steps {
+                deleteDir()
+
+                bbs_checkout(
+                    branches: [[name: "*/${params.BRANCH_NAME}"]],
+                    credentialsId: 'Admin_Bitbucket',
+                    id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+                    projectName: 'JIRA',
+                    repositoryName: 'sag',
+                    serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+                )
+
+                stash name: 'repo-workspace', includes: '**/*', useDefaultExcludes: false
+            }
+        }
+
+        stage('Set Build Name') {
+            agent any
+
+            steps {
+                script {
+                    def epic = params.EPIC_NAME.replaceAll('[^a-zA-Z0-9]', '-')
+                    def version = "R${env.BUILD_NUMBER}-${epic}-${params.BRANCH_NAME}"
+
+                    currentBuild.displayName = version
+                    currentBuild.description = "EPIC=${params.EPIC_NAME} | Branch=${params.BRANCH_NAME} | Packages=${params.SELECTED_PACKAGES}"
+                    env.VERSION = version
+
+                    echo "Build Name set to: ${version}"
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            agent { label 'SonarQube' }
+
+            steps {
+                deleteDir()
+                unstash 'repo-workspace'
+
+                script {
+                    def scannerHome = tool 'sonar-scanner-cli'
+                    def repoName = 'sag'
+                    def version = env.VERSION
+
+                    if (!fileExists('Packages')) {
+                        error('Packages folder not found in workspace.')
+                    }
+
+                    withSonarQubeEnv('SonarQube') {
+                        bat """
+                        @echo off
+                        cd /d "%WORKSPACE%"
+
+                        "${scannerHome}\\bin\\sonar-scanner.bat" ^
+                          -Dsonar.projectKey=${repoName} ^
+                          -Dsonar.projectName=${repoName} ^
+                          -Dsonar.projectVersion=${version} ^
+                          -Dsonar.projectBaseDir="%WORKSPACE%" ^
+                          -Dsonar.sources=Packages ^
+                          -Dsonar.exclusions=**/*.ndf,**/*.idf,**/*.class,**/*.jar,**/*.java ^
+                          -Dsonar.sourceEncoding=UTF-8 ^
+                          -Dsonar.branch.name=${params.BRANCH_NAME} ^
+                          -Dsonar.scanner.skip.ssl.verification=true
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            agent any
+            steps {
+                timeout(time: 15, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            emailext(
+                to: "${env.EMAIL_RECIPIENTS}",
+                subject: "SUCCESS - Sonar Scan - ${currentBuild.displayName}",
+                body: """
+                <h3>SonarQube Scan Completed Successfully</h3>
+
+                <b>Job:</b> ${env.JOB_NAME}<br>
+                <b>Build:</b> ${currentBuild.displayName}<br>
+                <b>EPIC:</b> ${params.EPIC_NAME}<br>
+                <b>Branch:</b> ${params.BRANCH_NAME}<br>
+                <b>Packages:</b> ${params.SELECTED_PACKAGES}<br>
+                <b>Project:</b> sag<br>
+                <b>Status:</b> SUCCESS
+                """
+            )
+            echo 'Scan completed successfully.'
+        }
+
+        failure {
+            emailext(
+                to: "${env.EMAIL_RECIPIENTS}",
+                subject: "FAILED - Sonar Scan - ${currentBuild.displayName ?: env.BUILD_NUMBER}",
+                body: """
+                <h3>SonarQube Scan Failed</h3>
+
+                <b>Job:</b> ${env.JOB_NAME}<br>
+                <b>Build:</b> ${currentBuild.displayName ?: env.BUILD_NUMBER}<br>
+                <b>EPIC:</b> ${params.EPIC_NAME}<br>
+                <b>Branch:</b> ${params.BRANCH_NAME}<br>
+                <b>Packages:</b> ${params.SELECTED_PACKAGES}<br>
+                <b>Project:</b> sag<br>
+                <b>Status:</b> FAILED
+                """
+            )
+            echo 'Scan failed. Check logs.'
+        }
+
+        always {
+            echo 'Job finished.'
+        }
+    }
+}
