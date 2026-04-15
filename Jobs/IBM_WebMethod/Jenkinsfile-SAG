@@ -92,7 +92,7 @@ pipeline {
 
     options {
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '20'))
+        buildDiscarder(logRotator(numToKeepStr: '5'))
     }
 
     environment {
@@ -134,6 +134,15 @@ pipeline {
                     echo "EPIC     : ${params.EPIC_NAME}"
                     echo "Targets  : ${selectedTargets.join(', ')}"
                     echo "Packages : ${selectedPackages.join(', ')}"
+                }
+            }
+        }
+
+        stage('Set Build Name') {
+            steps {
+                script {
+                    currentBuild.displayName = "${params.EPIC_NAME}"
+                    currentBuild.description = "EPIC: ${params.EPIC_NAME} | ENV: ${params.ENVIRONMENT}"
                 }
             }
         }
