@@ -35,6 +35,8 @@ properties([
             name: 'TARGET_SCOPE',
             description: 'Select target servers',
             referencedParameters: 'ENVIRONMENT',
+            filterable: true,
+            filterLength: 2,
             script: [
                 $class: 'GroovyScript',
                 fallbackScript: [
@@ -65,6 +67,8 @@ properties([
             choiceType: 'PT_CHECKBOX',
             name: 'PACKAGES_TO_BUILD',
             description: 'Select packages',
+            filterable: true,
+            filterLength: 2,
             script: [
                 $class: 'GroovyScript',
                 fallbackScript: [
@@ -92,18 +96,23 @@ pipeline {
 
     options {
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '5'))
+        buildDiscarder(logRotator(numToKeepStr: '4'))
     }
 
     environment {
-        DEPLOYER_HOST = 'localhost'
-        DEPLOYER_PORT = '5555'
+        SAG_HOME         = 'C:\\SoftwareAG'
+        ABE_BIN          = "${SAG_HOME}\\common\\AssetBuildEnvironment\\bin"
 
-        TEMP_SRC      = "${WORKSPACE}\\.tmp_build_src"
-        GENERATED_DIR = "${WORKSPACE}\\generated"
-        GENERATED_XML = "${WORKSPACE}\\generated\\Deployment_ProjectAutomator.xml"
+        DEPLOYER_BIN     = 'C:\\SoftwareAG\\IntegrationServer\\instances\\default\\packages\\WmDeployer\\bin'
+        DEPLOYER_HOST    = 'localhost'
+        DEPLOYER_PORT    = '5555'
 
-        TEMPLATE_XML  = 'deployer/templates/ProjectAutomator.Repository.template.xml'
+        TEMP_SRC         = "${WORKSPACE}\\.tmp_build_src"
+        BUILD_OUTPUT_DIR = "${WORKSPACE}\\build_output"
+        GENERATED_DIR    = "${WORKSPACE}\\generated"
+        GENERATED_XML    = "${WORKSPACE}\\generated\\Deployment_ProjectAutomator.xml"
+
+        TEMPLATE_XML     = 'deployer/templates/ProjectAutomator.Repository.template.xml'
     }
 
     stages {
@@ -188,9 +197,11 @@ pipeline {
                 bat """
                     @echo off
                     if exist "${env.TEMP_SRC}" rmdir /s /q "${env.TEMP_SRC}"
+                    if exist "${env.BUILD_OUTPUT_DIR}" rmdir /s /q "${env.BUILD_OUTPUT_DIR}"
                     if exist "${env.GENERATED_DIR}" rmdir /s /q "${env.GENERATED_DIR}"
 
                     mkdir "${env.TEMP_SRC}"
+                    mkdir "${env.BUILD_OUTPUT_DIR}"
                     mkdir "${env.GENERATED_DIR}"
                     mkdir "${env.TEMP_SRC}\\packages"
                 """
@@ -215,13 +226,34 @@ pipeline {
                 }
             }
         }
+/*
+        stage('ABE Build') {
+            steps {
+                bat """
+                    @echo off
+                    if not exist "${env.ABE_BIN}\\build.bat" (
+                        echo ABE build.bat not found at: ${env.ABE_BIN}\\build.bat
+                        exit /b 1
+                    )
 
+                    cd /d "${env.ABE_BIN}"
+
+                    call build.bat ^
+                      -Dbuild.source.dir="${env.TEMP_SRC}" ^
+                      -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" ^
+                      -Denable.build.IS=true
+
+                    if errorlevel 1 exit /b 1
+                """
+            }
+        }
+*/
         stage('Generate XML') {
             steps {
                 script {
                     def targets  = getTargetConfigs(params.ENVIRONMENT, params.TARGET_SCOPE)
                     def packages = getSelected(params.PACKAGES_TO_BUILD)
-                    def names    = buildNames(params.EPIC_NAME, params.ENVIRONMENT, targets)
+                    def names    = buildNames(params.EPIC_NAME)
 
                     def xml = readFile(file: env.TEMPLATE_XML, encoding: 'UTF-8')
 
@@ -234,12 +266,12 @@ pipeline {
                     xml = xml.replace('@TARGET_ALIASES@', buildTargetAliases(targets))
                     xml = xml.replace('@DEPLOYMENT_ENTRIES@', buildEntries(packages))
 
-                    xml = xml.replace('@PROJECT_NAME@', names)
-                    xml = xml.replace('@PROJECT_DESC@', names)
-                    xml = xml.replace('@DEPLOYMENT_SET_NAME@', names + "_SET")
-                    xml = xml.replace('@MAP_NAME@', names + "_MAP")
-                    xml = xml.replace('@CANDIDATE_NAME@', names)
-                    xml = xml.replace('@REPO_ALIAS@', 'RepoSource')
+                    xml = xml.replace('@PROJECT_NAME@', names.PROJECT_NAME)
+                    xml = xml.replace('@PROJECT_DESC@', names.PROJECT_DESC)
+                    xml = xml.replace('@DEPLOYMENT_SET_NAME@', names.DEPLOYMENT_SET_NAME)
+                    xml = xml.replace('@MAP_NAME@', names.MAP_NAME)
+                    xml = xml.replace('@CANDIDATE_NAME@', names.CANDIDATE_NAME)
+                    xml = xml.replace('@REPO_ALIAS@', names.REPO_ALIAS)
                     xml = xml.replace('@REPO_DIRECTORY@', env.TEMP_SRC.replace('\\', '\\\\'))
 
                     writeFile(file: env.GENERATED_XML, text: xml, encoding: 'UTF-8')
@@ -249,7 +281,43 @@ pipeline {
                 }
             }
         }
+/*
+        stage('Deploy') {
+            steps {
+                script {
+                    def names = buildNames(params.EPIC_NAME)
 
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'deployer-creds',
+                            usernameVariable: 'DEP_USER',
+                            passwordVariable: 'DEP_PWD'
+                        )
+                    ]) {
+                        bat """
+                            @echo off
+                            if not exist "${env.DEPLOYER_BIN}\\Deployer.bat" (
+                                echo Deployer.bat not found at: ${env.DEPLOYER_BIN}\\Deployer.bat
+                                exit /b 1
+                            )
+
+                            cd /d "${env.DEPLOYER_BIN}"
+
+                            call Deployer.bat --deploy ^
+                              -dc "${names.CANDIDATE_NAME}" ^
+                              -project "${names.PROJECT_NAME}" ^
+                              -host "${env.DEPLOYER_HOST}" ^
+                              -port "${env.DEPLOYER_PORT}" ^
+                              -user "%DEP_USER%" ^
+                              -pwd "%DEP_PWD%"
+
+                            if errorlevel 1 exit /b 1
+                        """
+                    }
+                }
+            }
+        }
+*/
         stage('Archive XML') {
             steps {
                 archiveArtifacts artifacts: 'generated/*.xml', allowEmptyArchive: false
@@ -268,8 +336,15 @@ def getSelected(val) {
               .findAll { it && it != 'None' }
 }
 
-def buildNames(epic, envName, targets) {
-    return "${epic}_${envName}_${targets.collect { it.alias }.join('_')}"
+def buildNames(epic) {
+    return [
+        PROJECT_NAME        : epic,
+        PROJECT_DESC        : epic,
+        DEPLOYMENT_SET_NAME : "${epic}_SET",
+        MAP_NAME            : "${epic}_MAP",
+        CANDIDATE_NAME      : epic,
+        REPO_ALIAS          : 'RepoSource'
+    ]
 }
 
 def buildEntries(pkgs) {
