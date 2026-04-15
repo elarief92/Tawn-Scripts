@@ -1,3 +1,92 @@
+properties([
+    parameters([
+
+        string(
+            name: 'EPIC_NAME',
+            defaultValue: '',
+            description: 'Required. e.g. EPIC-1234'
+        ),
+
+        [
+            $class: 'ChoiceParameter',
+            choiceType: 'PT_SINGLE_SELECT',
+            name: 'ENVIRONMENT',
+            description: 'Select environment',
+            script: [
+                $class: 'GroovyScript',
+                fallbackScript: [
+                    classpath: [],
+                    sandbox: true,
+                    script: 'return ["DEV"]'
+                ],
+                script: [
+                    classpath: [],
+                    sandbox: true,
+                    script: '''
+                        return ["DEV", "QC", "PROD"]
+                    '''
+                ]
+            ]
+        ],
+
+        [
+            $class: 'CascadeChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            name: 'TARGET_SCOPE',
+            description: 'Select target servers',
+            referencedParameters: 'ENVIRONMENT',
+            script: [
+                $class: 'GroovyScript',
+                fallbackScript: [
+                    classpath: [],
+                    sandbox: true,
+                    script: 'return ["QC_APP01"]'
+                ],
+                script: [
+                    classpath: [],
+                    sandbox: true,
+                    script: '''
+                        if (ENVIRONMENT == 'DEV') {
+                            return ['QC_APP01', 'QC_APP04']
+                        } else if (ENVIRONMENT == 'QC') {
+                            return ['QC_APP02', 'QC_APP05']
+                        } else if (ENVIRONMENT == 'PROD') {
+                            return ['QC_APP03', 'QC_APP06']
+                        } else {
+                            return ['None']
+                        }
+                    '''
+                ]
+            ]
+        ],
+
+        [
+            $class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            name: 'PACKAGES_TO_BUILD',
+            description: 'Select packages',
+            script: [
+                $class: 'GroovyScript',
+                fallbackScript: [
+                    classpath: [],
+                    sandbox: true,
+                    script: 'return ["TawnMotorNonRetail"]'
+                ],
+                script: [
+                    classpath: [],
+                    sandbox: true,
+                    script: '''
+                        return [
+                            "TawnMotorNonRetail",
+                            "TawnSMESalesCRM"
+                        ]
+                    '''
+                ]
+            ]
+        ]
+    ])
+])
+
 pipeline {
     agent { label 'built-in' }
 
@@ -6,103 +95,101 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
-    parameters {
-        string(name: 'EPIC_NAME', defaultValue: '', description: 'Required. Used as Deployer Project / Candidate base name, e.g. EPIC-1234')
-        string(name: 'BRANCH_NAME', defaultValue: 'master', description: 'Git branch to checkout')
-        string(name: 'PACKAGES_TO_BUILD', defaultValue: 'TawnMotorNonRetail,TawnSMESalesCRM', description: 'Comma-separated package names under packages/')
-        choice(name: 'TARGET_SCOPE', choices: ['QC_APP01', 'QC_APP02', 'QC_APP03', 'QC_ALL'], description: 'Select the allowed target scope')
-    }
-
     environment {
-        SAG_HOME = 'C:\\SoftwareAG'
-        ABE_BIN = "${SAG_HOME}\\common\\AssetBuildEnvironment\\bin"
-
-        DEPLOYER_BIN = 'C:\\SoftwareAG\\IntegrationServer\\instances\\default\\packages\\WmDeployer\\bin'
         DEPLOYER_HOST = 'localhost'
         DEPLOYER_PORT = '5555'
 
-        TEMP_SRC = "${WORKSPACE}\\.tmp_build_src"
-        BUILD_OUTPUT_DIR = "${WORKSPACE}\\build_output"
+        TEMP_SRC      = "${WORKSPACE}\\.tmp_build_src"
+        GENERATED_DIR = "${WORKSPACE}\\generated"
         GENERATED_XML = "${WORKSPACE}\\generated\\Deployment_ProjectAutomator.xml"
-        TEMPLATE_XML = "${WORKSPACE}\\deployer\\templates\\Deployment_ProjectAutomator.template.xml"
+
+        TEMPLATE_XML  = 'deployer/templates/ProjectAutomator.Repository.template.xml'
     }
 
     stages {
-        stage('Validate Inputs') {
+
+        stage('Validate') {
             steps {
                 script {
                     if (!params.EPIC_NAME?.trim()) {
-                        error("EPIC_NAME is required.")
+                        error("EPIC_NAME required")
                     }
 
-                    def selectedPackages = getSelectedPackages(params.PACKAGES_TO_BUILD)
+                    if (!params.ENVIRONMENT?.trim()) {
+                        error("ENVIRONMENT required")
+                    }
+
+                    def selectedTargets  = getSelected(params.TARGET_SCOPE)
+                    def selectedPackages = getSelected(params.PACKAGES_TO_BUILD)
+
+                    if (selectedTargets.isEmpty()) {
+                        error("Select at least 1 target")
+                    }
+
                     if (selectedPackages.isEmpty()) {
-                        error("PACKAGES_TO_BUILD cannot be empty.")
+                        error("Select at least 1 package")
                     }
 
-                    def names = buildNames(params.EPIC_NAME, params.TARGET_SCOPE)
-
-                    echo "Project Name     : ${names.PROJECT_NAME}"
-                    echo "Candidate Name   : ${names.DC_NAME}"
-                    echo "Map Name         : ${names.MAP_NAME}"
-                    echo "Target Scope     : ${params.TARGET_SCOPE}"
-                    echo "Target Server Ref: ${names.TARGET_SERVER_NAME}"
-                    echo "Branch           : ${params.BRANCH_NAME}"
-                    echo "Packages         : ${selectedPackages.join(',')}"
+                    echo "ENV      : ${params.ENVIRONMENT}"
+                    echo "EPIC     : ${params.EPIC_NAME}"
+                    echo "Targets  : ${selectedTargets.join(', ')}"
+                    echo "Packages : ${selectedPackages.join(', ')}"
                 }
             }
         }
 
         stage('Checkout Repo') {
             steps {
-                deleteDir()
+                script {
+                    def branchName = getEnvironmentConfig(params.ENVIRONMENT).branch
 
-                bbs_checkout(
-                    branches: [[name: "${params.BRANCH_NAME}"]],
-                    credentialsId: 'Admin_Bitbucket',
-                    id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
-                    projectName: 'JIRA',
-                    repositoryName: 'sag',
-                    serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
-                )
+                    deleteDir()
+
+                    bbs_checkout(
+                        branches: [[name: "*/${branchName}"]],
+                        credentialsId: 'Admin_Bitbucket',
+                        id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+                        projectName: 'JIRA',
+                        repositoryName: 'sag',
+                        serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+                    )
+                }
             }
         }
 
-        stage('Validate Package Paths') {
+        stage('Validate Files') {
             steps {
                 script {
-                    def selectedPackages = getSelectedPackages(params.PACKAGES_TO_BUILD)
+                    if (!fileExists(env.TEMPLATE_XML)) {
+                        error("Template XML not found in workspace: ${env.TEMPLATE_XML}")
+                    }
 
-                    for (pkg in selectedPackages) {
+                    def packages = getSelected(params.PACKAGES_TO_BUILD)
+                    for (pkg in packages) {
                         if (!fileExists("packages/${pkg}")) {
                             error("Package not found: packages/${pkg}")
                         }
-                    }
-
-                    if (!fileExists("deployer/templates/Deployment_ProjectAutomator.template.xml")) {
-                        error("Template XML not found: deployer/templates/Deployment_ProjectAutomator.template.xml")
                     }
                 }
             }
         }
 
-        stage('Prepare Temp Build Source') {
+        stage('Prepare Temp Source') {
             steps {
                 bat """
                     @echo off
                     if exist "${env.TEMP_SRC}" rmdir /s /q "${env.TEMP_SRC}"
-                    if exist "${env.BUILD_OUTPUT_DIR}" rmdir /s /q "${env.BUILD_OUTPUT_DIR}"
-                    if exist "${WORKSPACE}\\generated" rmdir /s /q "${WORKSPACE}\\generated"
+                    if exist "${env.GENERATED_DIR}" rmdir /s /q "${env.GENERATED_DIR}"
 
                     mkdir "${env.TEMP_SRC}"
-                    mkdir "${env.BUILD_OUTPUT_DIR}"
-                    mkdir "${WORKSPACE}\\generated"
+                    mkdir "${env.GENERATED_DIR}"
+                    mkdir "${env.TEMP_SRC}\\packages"
                 """
 
                 script {
-                    def selectedPackages = getSelectedPackages(params.PACKAGES_TO_BUILD)
+                    def packages = getSelected(params.PACKAGES_TO_BUILD)
 
-                    for (pkg in selectedPackages) {
+                    for (pkg in packages) {
                         bat """
                             @echo off
                             if not exist "${WORKSPACE}\\packages\\${pkg}" (
@@ -110,149 +197,135 @@ pipeline {
                                 exit /b 1
                             )
 
-                            if not exist "${env.TEMP_SRC}\\${pkg}" mkdir "${env.TEMP_SRC}\\${pkg}"
+                            if not exist "${env.TEMP_SRC}\\packages\\${pkg}" mkdir "${env.TEMP_SRC}\\packages\\${pkg}"
 
-                            xcopy "${WORKSPACE}\\packages\\${pkg}\\*" "${env.TEMP_SRC}\\${pkg}\\" /E /I /Y >nul
+                            xcopy "${WORKSPACE}\\packages\\${pkg}\\*" "${env.TEMP_SRC}\\packages\\${pkg}\\" /E /I /Y >nul
                             if errorlevel 1 exit /b 1
                         """
                     }
                 }
-
             }
         }
 
-        /*
-        stage('ABE Build') {
-            steps {
-                bat """
-                    @echo off
-                    if not exist "${env.ABE_BIN}\\build.bat" (
-                        echo ABE build.bat not found at: ${env.ABE_BIN}\\build.bat
-                        exit /b 1
-                    )
-
-                    cd /d "${env.ABE_BIN}"
-
-                    call build.bat ^
-                      -Dbuild.source.dir="${env.TEMP_SRC}" ^
-                      -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" ^
-                      -Denable.build.IS=true
-
-                    if errorlevel 1 exit /b 1
-                """
-            }
-        }
-        */
-
-        stage('Generate Define and Map XML') {
+        stage('Generate XML') {
             steps {
                 script {
-                    def names = buildNames(params.EPIC_NAME, params.TARGET_SCOPE)
+                    def targets  = getTargetConfigs(params.ENVIRONMENT, params.TARGET_SCOPE)
+                    def packages = getSelected(params.PACKAGES_TO_BUILD)
+                    def names    = buildNames(params.EPIC_NAME, params.ENVIRONMENT, targets)
 
-                    if (!fileExists("deployer/templates/Deployment_ProjectAutomator.template.xml")) {
-                        error("Template XML not found: deployer/templates/Deployment_ProjectAutomator.template.xml")
-                    }
+                    def xml = readFile(file: env.TEMPLATE_XML, encoding: 'UTF-8')
 
-                    def xml = readFile(file: 'deployer/templates/Deployment_ProjectAutomator.template.xml', encoding: 'UTF-8')
-                    xml = xml.replace('@PROJECT_NAME@', names.PROJECT_NAME)
-                    xml = xml.replace('@DC_NAME@', names.DC_NAME)
-                    xml = xml.replace('@MAP_NAME@', names.MAP_NAME)
-                    xml = xml.replace('@TARGET_SERVER_NAME@', names.TARGET_SERVER_NAME)
-                    xml = xml.replace('@BUILD_OUTPUT_DIR@', env.BUILD_OUTPUT_DIR ?: '')
+                    xml = xml.replace('@DEPLOYER_HOST@', env.DEPLOYER_HOST)
+                    xml = xml.replace('@DEPLOYER_PORT@', env.DEPLOYER_PORT)
+                    xml = xml.replace('@DEPLOYER_USER@', '${Username}')
+                    xml = xml.replace('@DEPLOYER_PWD@', '${Password}')
 
-                    writeFile(file: 'generated/Deployment_ProjectAutomator.xml', text: xml, encoding: 'UTF-8')
+                    xml = xml.replace('@IS_ALIASES@', buildISAliases(targets))
+                    xml = xml.replace('@TARGET_ALIASES@', buildTargetAliases(targets))
+                    xml = xml.replace('@DEPLOYMENT_ENTRIES@', buildEntries(packages))
+
+                    xml = xml.replace('@PROJECT_NAME@', names)
+                    xml = xml.replace('@PROJECT_DESC@', names)
+                    xml = xml.replace('@DEPLOYMENT_SET_NAME@', names + "_SET")
+                    xml = xml.replace('@MAP_NAME@', names + "_MAP")
+                    xml = xml.replace('@CANDIDATE_NAME@', names)
+                    xml = xml.replace('@REPO_ALIAS@', 'RepoSource')
+                    xml = xml.replace('@REPO_DIRECTORY@', env.TEMP_SRC.replace('\\', '\\\\'))
+
+                    writeFile(file: env.GENERATED_XML, text: xml, encoding: 'UTF-8')
 
                     echo '===== Generated XML ====='
-                    echo readFile(file: 'generated/Deployment_ProjectAutomator.xml', encoding: 'UTF-8')
+                    echo readFile(file: env.GENERATED_XML, encoding: 'UTF-8')
                 }
             }
         }
 
-        /*
-        stage('Define Project and Map in Deployer') {
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'deployer-creds', usernameVariable: 'DEP_USER', passwordVariable: 'DEP_PWD')]) {
-                    bat """
-                        @echo off
-                        if not exist "${env.DEPLOYER_BIN}\\projectautomator.bat" (
-                            echo projectautomator.bat not found at: ${env.DEPLOYER_BIN}\\projectautomator.bat
-                            exit /b 1
-                        )
-
-                        cd /d "${env.DEPLOYER_BIN}"
-                        call projectautomator.bat "${env.GENERATED_XML}"
-
-                        if errorlevel 1 exit /b 1
-                    """
-                }
-            }
-        }
-
-        stage('Deploy') {
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'deployer-creds', usernameVariable: 'DEP_USER', passwordVariable: 'DEP_PWD')]) {
-                    bat """
-                        @echo off
-                        if not exist "${env.DEPLOYER_BIN}\\Deployer.bat" (
-                            echo Deployer.bat not found at: ${env.DEPLOYER_BIN}\\Deployer.bat
-                            exit /b 1
-                        )
-
-                        cd /d "${env.DEPLOYER_BIN}"
-
-                        call Deployer.bat --deploy ^
-                          -dc "${buildNames(params.EPIC_NAME, params.TARGET_SCOPE).DC_NAME}" ^
-                          -project "${buildNames(params.EPIC_NAME, params.TARGET_SCOPE).PROJECT_NAME}" ^
-                          -host "${env.DEPLOYER_HOST}" ^
-                          -port "${env.DEPLOYER_PORT}" ^
-                          -user "%DEP_USER%" ^
-                          -pwd "%DEP_PWD%"
-
-                        if errorlevel 1 exit /b 1
-                    """
-                }
-            }
-        }
-        */
-
-        stage('Archive XML Only') {
+        stage('Archive XML') {
             steps {
                 archiveArtifacts artifacts: 'generated/*.xml', allowEmptyArchive: false
             }
         }
     }
-
-
 }
 
-def getSelectedPackages(String packagesToBuild) {
-    return packagesToBuild
-        .split(',')
-        .collect { it.trim() }
-        .findAll { it }
-}
-
-def buildNames(String epicName, String targetScope) {
-    def projectName = "${epicName}_${targetScope}"
-    return [
-        PROJECT_NAME      : projectName,
-        DC_NAME           : projectName,
-        MAP_NAME          : "${projectName}_MAP",
-        TARGET_SERVER_NAME: resolveTarget(targetScope)
-    ]
-}
-
-String resolveTarget(String scope) {
-    def targets = [
-        'QC_APP01': 'QC_APP01',
-        'QC_APP02': 'QC_APP02',
-        'QC_APP03': 'QC_APP03',
-        'QC_ALL'  : 'QC_GROUP_ALL'
-    ]
-
-    if (!targets.containsKey(scope)) {
-        error("Unsupported TARGET_SCOPE: ${scope}")
+def getSelected(val) {
+    if (!val?.trim()) {
+        return []
     }
 
-    return targets[scope]
+    return val.split(',')
+              .collect { it.trim() }
+              .findAll { it && it != 'None' }
+}
+
+def buildNames(epic, envName, targets) {
+    return "${epic}_${envName}_${targets.collect { it.alias }.join('_')}"
+}
+
+def buildEntries(pkgs) {
+    return pkgs.collect {
+        """                <Component componentType="*" compositeName="${it}" name="*" srcAlias="RepoSource" type="IS"/>"""
+    }.join('\n')
+}
+
+def buildISAliases(targets) {
+    return targets.collect {
+        """            <isalias name="${it.alias}">
+                <host>${it.host}</host>
+                <port>${it.port}</port>
+                <user>Administrator</user>
+                <pwd>\${Password}</pwd>
+                <useSSL>false</useSSL>
+                <installDeployerResource>false</installDeployerResource>
+                <Test>false</Test>
+            </isalias>"""
+    }.join('\n')
+}
+
+def buildTargetAliases(targets) {
+    return targets.collect {
+        """                <alias type="IS">${it.alias}</alias>"""
+    }.join('\n')
+}
+
+def getEnvironmentConfig(envName) {
+    def config = [
+        DEV : [branch: 'DEV'],
+        QC  : [branch: 'QC'],
+        PROD: [branch: 'PROD']
+    ]
+
+    if (!config.containsKey(envName)) {
+        error("Unsupported ENVIRONMENT: ${envName}")
+    }
+
+    return config[envName]
+}
+
+def getTargetConfigs(envName, scopeCsv) {
+    def map = [
+        'QC_APP01':[alias:'QC_APP01', host:'10.24.7.181', port:'5555'],
+        'QC_APP02':[alias:'QC_APP02', host:'10.24.7.182', port:'5555'],
+        'QC_APP03':[alias:'QC_APP03', host:'10.24.7.183', port:'5555'],
+        'QC_APP04':[alias:'QC_APP04', host:'10.24.7.184', port:'5555'],
+        'QC_APP05':[alias:'QC_APP05', host:'10.24.7.185', port:'5555'],
+        'QC_APP06':[alias:'QC_APP06', host:'10.24.7.186', port:'5555']
+    ]
+
+    def allowed = [
+        DEV : ['QC_APP01', 'QC_APP04'],
+        QC  : ['QC_APP02', 'QC_APP05'],
+        PROD: ['QC_APP03', 'QC_APP06']
+    ]
+
+    def selected = getSelected(scopeCsv)
+
+    selected.each {
+        if (!allowed[envName].contains(it)) {
+            error("${it} not allowed for ${envName}")
+        }
+    }
+
+    return selected.collect { map[it] }
 }
