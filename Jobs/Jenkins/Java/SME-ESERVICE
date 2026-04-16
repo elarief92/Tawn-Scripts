@@ -17,11 +17,13 @@ pipeline {
         script {
           def branchName = env.BRANCH_NAME.toString()
           def envLower   = branchName.toLowerCase()
+          def appName    = 'sme-eservice'
 
           bffBuildScan([
             epic: params.EPIC,
             branch: branchName,
             lob: 'DXP',
+            appName: appName,
             buildAgent: 'built-in',
             sonarAgent: 'SonarQube',
 
@@ -37,7 +39,7 @@ pipeline {
 set NODE_OPTIONS=--max-old-space-size=8192
 """,
 
-            mvnCmd: "mvn clean install -Denvironment=${envLower} -DapplicationName=sme-eservice -DartifactVersion=${env.ARTIFACT_VERSION}",
+            mvnCmd: "mvn clean install -Denvironment=${envLower} -DapplicationName=${appName} -DartifactVersion=${env.ARTIFACT_VERSION}",
 
             sonar: [
               server: 'SonarQube',

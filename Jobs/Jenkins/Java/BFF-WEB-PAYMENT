@@ -17,11 +17,13 @@ pipeline {
         script {
           def branchName = env.BRANCH_NAME.toString()
           def envLower   = branchName.toLowerCase()
+          def appName    = 'one-payment'
 
           bffBuildScan([
             epic: params.EPIC,
             branch: branchName,
             lob: 'DXP',
+            appName: appName,
             buildAgent: 'built-in',
             sonarAgent: 'SonarQube',
 
@@ -39,7 +41,7 @@ if %ERRORLEVEL% LEQ 7 exit /b 0
 exit /b %ERRORLEVEL%
 """,
 
-            mvnCmd: "mvn clean package -Denvironment=${envLower} -DapplicationName=one-payment -DlogDirectory=\"/u01/Logs\" -Dbuild.finalName=one-payment -DartifactVersion=${env.ARTIFACT_VERSION}",
+            mvnCmd: "mvn clean package -Denvironment=${envLower} -DapplicationName=${appName} -DlogDirectory=\"/u01/Logs\" -Dbuild.finalName=${appName} -DartifactVersion=${env.ARTIFACT_VERSION}",
 
             sonar: [
               server: 'SonarQube',

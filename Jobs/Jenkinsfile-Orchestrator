@@ -1,0 +1,182 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        string(name: 'EPIC', defaultValue: '', description: 'Use a Valid Jira Epic Number')
+    }
+
+    environment {
+        EMAIL_TO = 'melarief@tawuniya.com'
+    }
+
+    stages {
+
+        stage('Set Build Name') {
+            steps {
+                script {
+                    if (params.EPIC && params.EPIC.trim()) {
+                        currentBuild.displayName = params.EPIC.trim()
+                        currentBuild.description = "EPIC: ${params.EPIC}"
+                        echo "Build name set to: ${currentBuild.displayName}"
+                    } else {
+                        currentBuild.displayName = "#${env.BUILD_NUMBER}"
+                        echo "EPIC not provided → using default build number"
+                    }
+                }
+            }
+        }
+
+        stage('Validate Selection') {
+            steps {
+                script {
+                    def selected = params.SELECTED_JOBS
+
+                    if (!selected || selected.toString().trim() == '') {
+                        error("No jobs were selected in SELECTED_JOBS.")
+                    }
+
+                    if (!params.EPIC?.trim()) {
+                        error("EPIC parameter is required.")
+                    }
+
+                    def normalizedJobs = []
+
+                    if (selected instanceof String) {
+                        normalizedJobs = selected.split(',').collect { it.trim() }.findAll { it }
+                    } else if (selected instanceof List) {
+                        normalizedJobs = selected.collect { it.toString().trim() }.findAll { it }
+                    } else {
+                        normalizedJobs = [selected.toString().trim()].findAll { it }
+                    }
+
+                    def allowedJobs = [
+                        'DH-MBI-CLAIMS-NR',
+                        'BFF-AAMAL-ESERVICES'
+                    ]
+
+                    def invalidJobs = normalizedJobs.findAll { !(it in allowedJobs) }
+
+                    if (invalidJobs) {
+                        error("Invalid jobs selected: ${invalidJobs.join(', ')}")
+                    }
+
+                    env.JOBS_TO_RUN = normalizedJobs.join(',')
+
+                    echo "Selected jobs: ${env.JOBS_TO_RUN}"
+                }
+            }
+        }
+
+        stage('Run Selected Jobs Sequentially') {
+            steps {
+                script {
+                    def jobs = env.JOBS_TO_RUN.split(',').collect { it.trim() }.findAll { it }
+
+                    def successJobs = []
+                    def failedJobs  = []
+                    def abortedJobs = []
+
+                    for (int i = 0; i < jobs.size(); i++) {
+
+                        def jobName = jobs[i]
+                        echo "Starting job: ${jobName}"
+
+                        def downstreamResult = 'UNKNOWN'
+                        def downstreamNumber = ''
+                        def downstreamUrl = ''
+
+                        try {
+                            def downstreamBuild = null
+
+                            timeout(time: 30, unit: 'MINUTES') {
+                                downstreamBuild = build(
+                                    job: jobName,
+                                    wait: true,
+                                    propagate: false,
+                                    parameters: [
+                                        string(name: 'EPIC', value: params.EPIC)
+                                    ]
+                                )
+                            }
+
+                            downstreamNumber = downstreamBuild.getNumber()
+                            downstreamResult = downstreamBuild.getResult()
+                            downstreamUrl = downstreamBuild.getAbsoluteUrl()
+
+                            def jobLink = "<a href='${downstreamUrl}'>${jobName} #${downstreamNumber}</a>"
+
+                            if (downstreamResult == 'SUCCESS') {
+                                successJobs << jobLink
+                            } else if (downstreamResult == 'ABORTED') {
+                                abortedJobs << jobLink
+                            } else {
+                                failedJobs << "${jobLink} (${downstreamResult})"
+                            }
+
+                        } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException ex) {
+                            echo "Timeout/Interrupted: ${jobName}"
+                            failedJobs << "${jobName} (TIMEOUT/INTERRUPTED)"
+                            downstreamResult = 'TIMEOUT'
+                        } catch (Exception ex) {
+                            echo "Error: ${jobName} → ${ex.getMessage()}"
+                            failedJobs << "${jobName} (ERROR)"
+                            downstreamResult = 'FAILURE'
+                        }
+
+                        // ✅ WAIT LOGIC (1 minute)
+                        if (i < jobs.size() - 1) {
+                            if (downstreamResult == 'ABORTED') {
+                                echo "ABORTED → skipping wait"
+                            } else {
+                                echo "Waiting 1 minute before next job..."
+                                sleep time: 1, unit: 'MINUTES'
+                            }
+                        }
+                    }
+
+                    env.SUCCESS_JOBS = successJobs ? successJobs.join('<br/>') : 'None'
+                    env.FAILED_JOBS  = failedJobs  ? failedJobs.join('<br/>')  : 'None'
+                    env.ABORTED_JOBS = abortedJobs ? abortedJobs.join('<br/>') : 'None'
+
+                    if (failedJobs || abortedJobs) {
+                        currentBuild.result = 'UNSTABLE'
+                    } else {
+                        currentBuild.result = 'SUCCESS'
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            emailext(
+                to: "${env.EMAIL_TO}",
+                subject: "EPIC ${params.EPIC} - Multi Job Result - ${currentBuild.currentResult}",
+                mimeType: 'text/html',
+                body: """
+                <html>
+                <body>
+                    <p><b>EPIC:</b> ${params.EPIC}</p>
+                    <p><b>Result:</b> ${currentBuild.currentResult}</p>
+
+                    <p><b>Selected Jobs:</b><br/>${env.JOBS_TO_RUN}</p>
+
+                    <p><b>Successful:</b><br/>${env.SUCCESS_JOBS}</p>
+                    <p><b>Failed:</b><br/>${env.FAILED_JOBS}</p>
+                    <p><b>Aborted:</b><br/>${env.ABORTED_JOBS}</p>
+
+                    <br/>
+                    <p>Jenkins Orchestrator</p>
+                </body>
+                </html>
+                """
+            )
+        }
+    }
+}

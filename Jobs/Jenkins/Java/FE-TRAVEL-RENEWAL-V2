@@ -17,11 +17,13 @@ pipeline {
         script {
           def branchName = env.BRANCH_NAME.toString()
           def envLower   = branchName.toLowerCase()
+          def appName    = 'products'
 
           bffBuildScan([
             epic: params.EPIC,
             branch: branchName,
             lob: 'DXP',
+            appName: appName,
             buildAgent: 'built-in',
             sonarAgent: 'SonarQube',
 
@@ -33,13 +35,13 @@ pipeline {
               serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
             ],
 
-           preBuildCmd: """
+            preBuildCmd: """
 robocopy "E:\\Jenkins\\Home\\workspace\\Digital Experience Platforms\\Configuration\\${branchName}\\dh-renewal" "E:\\Jenkins\\Home\\workspace\\sonarqube\\tawn\\FE-TRAVEL-RENEWAL-V2" /E /J /COPY:DATS /MT:1 /IS /IT /IM /X /V /NP /NODCOPY /XD .*
 if %ERRORLEVEL% LEQ 7 exit /b 0
 exit /b %ERRORLEVEL%
 """,
 
-            mvnCmd: "mvn clean install -Denvironment=${envLower} -DapplicationName=products -DartifactVersion=${env.ARTIFACT_VERSION}",
+            mvnCmd: "mvn clean install -Denvironment=${envLower} -DapplicationName=${appName} -DartifactVersion=${env.ARTIFACT_VERSION}",
 
             sonar: [
               server: 'SonarQube',
