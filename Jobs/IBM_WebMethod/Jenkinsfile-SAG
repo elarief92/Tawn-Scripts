@@ -92,7 +92,12 @@ properties([
 ])
 
 pipeline {
-    agent { label 'built-in' }
+    agent { label 'SAG_NODE' }
+
+    tools {
+        jdk 'JDK_SAG'
+        ant 'ANT_SAG'
+    }
 
     options {
         disableConcurrentBuilds()
@@ -100,19 +105,19 @@ pipeline {
     }
 
     environment {
-        SAG_HOME         = 'C:\\SoftwareAG'
-        ABE_BIN          = "${SAG_HOME}\\common\\AssetBuildEnvironment\\bin"
+        SAG_HOME            = '/dbp1011/softwareag'
 
-        DEPLOYER_BIN     = 'C:\\SoftwareAG\\IntegrationServer\\instances\\default\\packages\\WmDeployer\\bin'
-        DEPLOYER_HOST    = 'localhost'
-        DEPLOYER_PORT    = '5555'
+        ABE_BUILD_FILE      = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
+        DEPLOYER_BIN        = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
+        DEPLOYER_HOST       = 'localhost'
+        DEPLOYER_PORT       = '5555'
 
-        TEMP_SRC         = "${WORKSPACE}\\.tmp_build_src"
-        BUILD_OUTPUT_DIR = "${WORKSPACE}\\build_output"
-        GENERATED_DIR    = "${WORKSPACE}\\generated"
-        GENERATED_XML    = "${WORKSPACE}\\generated\\Deployment_ProjectAutomator.xml"
+        TEMP_SRC            = "${WORKSPACE}/.tmp_build_src"
+        BUILD_OUTPUT_DIR    = "${WORKSPACE}/build_output"
+        GENERATED_DIR       = "${WORKSPACE}/generated"
+        GENERATED_XML       = "${WORKSPACE}/generated/Deployment_ProjectAutomator.xml"
 
-        TEMPLATE_XML     = 'deployer/templates/ProjectAutomator.Repository.template.xml'
+        TEMPLATE_XML        = 'deployer/templates/ProjectAutomator.Repository.template.xml'
     }
 
     stages {
@@ -139,6 +144,9 @@ pipeline {
                         error("Select at least 1 package")
                     }
 
+                    echo "NODE     : ${env.NODE_NAME}"
+                    echo "OS       : Linux agent expected"
+                    echo "WORKSPACE: ${env.WORKSPACE}"
                     echo "ENV      : ${params.ENVIRONMENT}"
                     echo "EPIC     : ${params.EPIC_NAME}"
                     echo "Targets  : ${selectedTargets.join(', ')}"
@@ -194,60 +202,44 @@ pipeline {
 
         stage('Prepare Temp Source') {
             steps {
-                bat """
-                    @echo off
-                    if exist "${env.TEMP_SRC}" rmdir /s /q "${env.TEMP_SRC}"
-                    if exist "${env.BUILD_OUTPUT_DIR}" rmdir /s /q "${env.BUILD_OUTPUT_DIR}"
-                    if exist "${env.GENERATED_DIR}" rmdir /s /q "${env.GENERATED_DIR}"
-
-                    mkdir "${env.TEMP_SRC}"
-                    mkdir "${env.BUILD_OUTPUT_DIR}"
-                    mkdir "${env.GENERATED_DIR}"
-                    mkdir "${env.TEMP_SRC}\\packages"
+                sh """
+                    set -e
+                    rm -rf "${env.TEMP_SRC}" "${env.BUILD_OUTPUT_DIR}" "${env.GENERATED_DIR}"
+                    mkdir -p "${env.TEMP_SRC}/packages"
+                    mkdir -p "${env.BUILD_OUTPUT_DIR}"
+                    mkdir -p "${env.GENERATED_DIR}"
                 """
 
                 script {
                     def packages = getSelected(params.PACKAGES_TO_BUILD)
 
                     for (pkg in packages) {
-                        bat """
-                            @echo off
-                            if not exist "${WORKSPACE}\\packages\\${pkg}" (
-                                echo Package not found: ${WORKSPACE}\\packages\\${pkg}
-                                exit /b 1
-                            )
-
-                            if not exist "${env.TEMP_SRC}\\packages\\${pkg}" mkdir "${env.TEMP_SRC}\\packages\\${pkg}"
-
-                            xcopy "${WORKSPACE}\\packages\\${pkg}\\*" "${env.TEMP_SRC}\\packages\\${pkg}\\" /E /I /Y >nul
-                            if errorlevel 1 exit /b 1
+                        sh """
+                            set -e
+                            test -d "${WORKSPACE}/packages/${pkg}" || { echo "Package not found: ${WORKSPACE}/packages/${pkg}"; exit 1; }
+                            mkdir -p "${env.TEMP_SRC}/packages/${pkg}"
+                            cp -R "${WORKSPACE}/packages/${pkg}/." "${env.TEMP_SRC}/packages/${pkg}/"
                         """
                     }
                 }
             }
         }
-/*
+
         stage('ABE Build') {
             steps {
-                bat """
-                    @echo off
-                    if not exist "${env.ABE_BIN}\\build.bat" (
-                        echo ABE build.bat not found at: ${env.ABE_BIN}\\build.bat
-                        exit /b 1
-                    )
-
-                    cd /d "${env.ABE_BIN}"
-
-                    call build.bat ^
-                      -Dbuild.source.dir="${env.TEMP_SRC}" ^
-                      -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" ^
-                      -Denable.build.IS=true
-
-                    if errorlevel 1 exit /b 1
+                sh """
+                    set -e
+                    ant -f "${env.ABE_BUILD_FILE}" build \\
+                      -Dsag.install.dir="${env.SAG_HOME}" \\
+                      -Dbuild.source.dir="${env.TEMP_SRC}" \\
+                      -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" \\
+                      -Denable.checkout=false \\
+                      -Denable.build.IS=true \\
+                      -Dbuild.exit.error=true
                 """
             }
         }
-*/
+
         stage('Generate XML') {
             steps {
                 script {
@@ -272,7 +264,7 @@ pipeline {
                     xml = xml.replace('@MAP_NAME@', names.MAP_NAME)
                     xml = xml.replace('@CANDIDATE_NAME@', names.CANDIDATE_NAME)
                     xml = xml.replace('@REPO_ALIAS@', names.REPO_ALIAS)
-                    xml = xml.replace('@REPO_DIRECTORY@', env.TEMP_SRC.replace('\\', '\\\\'))
+                    xml = xml.replace('@REPO_DIRECTORY@', env.BUILD_OUTPUT_DIR)
 
                     writeFile(file: env.GENERATED_XML, text: xml, encoding: 'UTF-8')
 
@@ -281,7 +273,22 @@ pipeline {
                 }
             }
         }
-/*
+
+        stage('Create Project') {
+            steps {
+                sh """
+                    set -e
+                    test -f "${env.DEPLOYER_BIN}/projectautomatorUnix.sh" || {
+                        echo "projectautomatorUnix.sh not found at: ${env.DEPLOYER_BIN}/projectautomatorUnix.sh"
+                        exit 1
+                    }
+
+                    cd "${env.DEPLOYER_BIN}"
+                    ./projectautomatorUnix.sh "${env.GENERATED_XML}"
+                """
+            }
+        }
+
         stage('Deploy') {
             steps {
                 script {
@@ -294,30 +301,28 @@ pipeline {
                             passwordVariable: 'DEP_PWD'
                         )
                     ]) {
-                        bat """
-                            @echo off
-                            if not exist "${env.DEPLOYER_BIN}\\Deployer.bat" (
-                                echo Deployer.bat not found at: ${env.DEPLOYER_BIN}\\Deployer.bat
-                                exit /b 1
-                            )
+                        sh """
+                            set -e
+                            test -f "${env.DEPLOYER_BIN}/Deployer.sh" || {
+                                echo "Deployer.sh not found at: ${env.DEPLOYER_BIN}/Deployer.sh"
+                                exit 1
+                            }
 
-                            cd /d "${env.DEPLOYER_BIN}"
+                            cd "${env.DEPLOYER_BIN}"
 
-                            call Deployer.bat --deploy ^
-                              -dc "${names.CANDIDATE_NAME}" ^
-                              -project "${names.PROJECT_NAME}" ^
-                              -host "${env.DEPLOYER_HOST}" ^
-                              -port "${env.DEPLOYER_PORT}" ^
-                              -user "%DEP_USER%" ^
-                              -pwd "%DEP_PWD%"
-
-                            if errorlevel 1 exit /b 1
+                            ./Deployer.sh --deploy \\
+                              -dc "${names.CANDIDATE_NAME}" \\
+                              -project "${names.PROJECT_NAME}" \\
+                              -host "${env.DEPLOYER_HOST}" \\
+                              -port "${env.DEPLOYER_PORT}" \\
+                              -user "${DEP_USER}" \\
+                              -pwd "${DEP_PWD}"
                         """
                     }
                 }
             }
         }
-*/
+
         stage('Archive XML') {
             steps {
                 archiveArtifacts artifacts: 'generated/*.xml', allowEmptyArchive: false
