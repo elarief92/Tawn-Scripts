@@ -95,8 +95,8 @@ pipeline {
     agent { label 'SAG_NODE' }
 
     tools {
-        jdk 'JDK_SAG'
-        ant 'ANT_SAG'
+        jdk 'JDK_HOME'
+        ant 'ANT_HOME'
     }
 
     options {
@@ -105,19 +105,20 @@ pipeline {
     }
 
     environment {
-        SAG_HOME            = '/dbp1011/softwareag'
+        SAG_HOME             = '/dbp1011/softwareag'
 
-        ABE_BUILD_FILE      = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
-        DEPLOYER_BIN        = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
-        DEPLOYER_HOST       = 'localhost'
-        DEPLOYER_PORT       = '5555'
+        ABE_BUILD_FILE       = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
+        DEPLOYER_HOME        = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer"
+        DEPLOYER_HOST        = 'localhost'
+        DEPLOYER_PORT        = '5555'
 
-        TEMP_SRC            = "${WORKSPACE}/.tmp_build_src"
-        BUILD_OUTPUT_DIR    = "${WORKSPACE}/build_output"
-        GENERATED_DIR       = "${WORKSPACE}/generated"
-        GENERATED_XML       = "${WORKSPACE}/generated/Deployment_ProjectAutomator.xml"
+        TEMP_SRC             = "${WORKSPACE}/.tmp_build_src"
+        BUILD_OUTPUT_DIR     = "${WORKSPACE}/build_output"
+        GENERATED_DIR        = "${WORKSPACE}/generated"
+        GENERATED_XML        = "${WORKSPACE}/generated/Deployment_ProjectAutomator.xml"
+        BUILD_LOG_FILE       = "${WORKSPACE}/generated/abe-build.log"
 
-        TEMPLATE_XML        = 'deployer/templates/ProjectAutomator.Repository.template.xml'
+        TEMPLATE_XML         = 'deployer/templates/ProjectAutomator.Repository.template.xml'
     }
 
     stages {
@@ -144,13 +145,19 @@ pipeline {
                         error("Select at least 1 package")
                     }
 
-                    echo "NODE     : ${env.NODE_NAME}"
-                    echo "OS       : Linux agent expected"
-                    echo "WORKSPACE: ${env.WORKSPACE}"
-                    echo "ENV      : ${params.ENVIRONMENT}"
-                    echo "EPIC     : ${params.EPIC_NAME}"
-                    echo "Targets  : ${selectedTargets.join(', ')}"
-                    echo "Packages : ${selectedPackages.join(', ')}"
+                    if (!fileExists(env.ABE_BUILD_FILE)) {
+                        error("ABE build.xml not found: ${env.ABE_BUILD_FILE}")
+                    }
+
+                    echo "NODE            : ${env.NODE_NAME}"
+                    echo "WORKSPACE       : ${env.WORKSPACE}"
+                    echo "SAG_HOME        : ${env.SAG_HOME}"
+                    echo "ABE_BUILD_FILE  : ${env.ABE_BUILD_FILE}"
+                    echo "DEPLOYER_HOME   : ${env.DEPLOYER_HOME}"
+                    echo "ENV             : ${params.ENVIRONMENT}"
+                    echo "EPIC            : ${params.EPIC_NAME}"
+                    echo "Targets         : ${selectedTargets.join(', ')}"
+                    echo "Packages        : ${selectedPackages.join(', ')}"
                 }
             }
         }
@@ -231,10 +238,22 @@ pipeline {
                     set -e
                     ant -f "${env.ABE_BUILD_FILE}" build \\
                       -Dsag.install.dir="${env.SAG_HOME}" \\
-                      -Dbuild.source.dir="${env.TEMP_SRC}" \\
                       -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" \\
+                      -Dbuild.source.dir="${env.TEMP_SRC}" \\
                       -Denable.checkout=false \\
+                      -Denable.archive=false \\
                       -Denable.build.IS=true \\
+                      -Denable.build.MWS=false \\
+                      -Denable.build.BPM=false \\
+                      -Denable.build.TN=false \\
+                      -Denable.build.Optimize=false \\
+                      -Denable.build.Broker=false \\
+                      -Denable.build.EDA=false \\
+                      -Denable.build.RULES=false \\
+                      -Denable.build.UniversalMessaging=false \\
+                      -Dbuild.log.enable=true \\
+                      -Dbuild.log.fileName="${env.BUILD_LOG_FILE}" \\
+                      -Dbuild.logLevel=INFO \\
                       -Dbuild.exit.error=true
                 """
             }
@@ -276,56 +295,70 @@ pipeline {
 
         stage('Create Project') {
             steps {
-                sh """
-                    set -e
-                    test -f "${env.DEPLOYER_BIN}/projectautomatorUnix.sh" || {
-                        echo "projectautomatorUnix.sh not found at: ${env.DEPLOYER_BIN}/projectautomatorUnix.sh"
-                        exit 1
-                    }
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'deployer-creds',
+                        usernameVariable: 'DEP_USER',
+                        passwordVariable: 'DEP_PWD'
+                    )
+                ]) {
+                    script {
+                        def names = buildNames(params.EPIC_NAME)
 
-                    cd "${env.DEPLOYER_BIN}"
-                    ./projectautomatorUnix.sh "${env.GENERATED_XML}"
-                """
-            }
-        }
-
-        stage('Deploy') {
-            steps {
-                script {
-                    def names = buildNames(params.EPIC_NAME)
-
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: 'deployer-creds',
-                            usernameVariable: 'DEP_USER',
-                            passwordVariable: 'DEP_PWD'
-                        )
-                    ]) {
                         sh """
                             set -e
-                            test -f "${env.DEPLOYER_BIN}/Deployer.sh" || {
-                                echo "Deployer.sh not found at: ${env.DEPLOYER_BIN}/Deployer.sh"
-                                exit 1
-                            }
-
-                            cd "${env.DEPLOYER_BIN}"
-
-                            ./Deployer.sh --deploy \\
-                              -dc "${names.CANDIDATE_NAME}" \\
-                              -project "${names.PROJECT_NAME}" \\
-                              -host "${env.DEPLOYER_HOST}" \\
-                              -port "${env.DEPLOYER_PORT}" \\
-                              -user "${DEP_USER}" \\
-                              -pwd "${DEP_PWD}"
+                            ant -f "${env.ABE_BUILD_FILE}" createProject \\
+                              -Denv="${params.ENVIRONMENT}" \\
+                              -Ddeployer.home="${env.DEPLOYER_HOME}" \\
+                              -Dautomater.file="${env.GENERATED_XML}" \\
+                              -Dproj.name="${names.PROJECT_NAME}" \\
+                              -Dproj.map="${names.MAP_NAME}" \\
+                              -Dproj.dc="${names.CANDIDATE_NAME}" \\
+                              -Ddeployer.host="${env.DEPLOYER_HOST}" \\
+                              -Ddeployer.port="${env.DEPLOYER_PORT}" \\
+                              -Ddeployer.user="${DEP_USER}" \\
+                              -Ddeployer.pwd="${DEP_PWD}" \\
+                              -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}"
                         """
                     }
                 }
             }
         }
 
-        stage('Archive XML') {
+        stage('Deploy Project') {
             steps {
-                archiveArtifacts artifacts: 'generated/*.xml', allowEmptyArchive: false
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'deployer-creds',
+                        usernameVariable: 'DEP_USER',
+                        passwordVariable: 'DEP_PWD'
+                    )
+                ]) {
+                    script {
+                        def names = buildNames(params.EPIC_NAME)
+
+                        sh """
+                            set -e
+                            ant -f "${env.ABE_BUILD_FILE}" DeployProject \\
+                              -Denv="${params.ENVIRONMENT}" \\
+                              -Ddeployer.home="${env.DEPLOYER_HOME}" \\
+                              -Dproj.name="${names.PROJECT_NAME}" \\
+                              -Dproj.map="${names.MAP_NAME}" \\
+                              -Dproj.dc="${names.CANDIDATE_NAME}" \\
+                              -Ddeployer.host="${env.DEPLOYER_HOST}" \\
+                              -Ddeployer.port="${env.DEPLOYER_PORT}" \\
+                              -Ddeployer.user="${DEP_USER}" \\
+                              -Ddeployer.pwd="${DEP_PWD}" \\
+                              -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Archive Artifacts') {
+            steps {
+                archiveArtifacts artifacts: 'generated/*.xml, generated/*.log', allowEmptyArchive: true
             }
         }
     }
@@ -337,8 +370,8 @@ def getSelected(val) {
     }
 
     return val.split(',')
-              .collect { it.trim() }
-              .findAll { it && it != 'None' }
+              .collect { selectedValue -> selectedValue.trim() }
+              .findAll { selectedValue -> selectedValue && selectedValue != 'None' }
 }
 
 def buildNames(epic) {
@@ -353,16 +386,16 @@ def buildNames(epic) {
 }
 
 def buildEntries(pkgs) {
-    return pkgs.collect {
-        """                <Component componentType="*" compositeName="${it}" name="*" srcAlias="RepoSource" type="IS"/>"""
+    return pkgs.collect { pkg ->
+        """                <Component componentType="*" compositeName="${pkg}" name="*" srcAlias="RepoSource" type="IS"/>"""
     }.join('\n')
 }
 
 def buildISAliases(targets) {
-    return targets.collect {
-        """            <isalias name="${it.alias}">
-                <host>${it.host}</host>
-                <port>${it.port}</port>
+    return targets.collect { target ->
+        """            <isalias name="${target.alias}">
+                <host>${target.host}</host>
+                <port>${target.port}</port>
                 <user>Administrator</user>
                 <pwd>\${Password}</pwd>
                 <useSSL>false</useSSL>
@@ -373,8 +406,8 @@ def buildISAliases(targets) {
 }
 
 def buildTargetAliases(targets) {
-    return targets.collect {
-        """                <alias type="IS">${it.alias}</alias>"""
+    return targets.collect { target ->
+        """                <alias type="IS">${target.alias}</alias>"""
     }.join('\n')
 }
 
@@ -393,7 +426,7 @@ def getEnvironmentConfig(envName) {
 }
 
 def getTargetConfigs(envName, scopeCsv) {
-    def map = [
+    def targetConfigMap = [
         'QC_APP01':[alias:'QC_APP01', host:'10.24.7.181', port:'5555'],
         'QC_APP02':[alias:'QC_APP02', host:'10.24.7.182', port:'5555'],
         'QC_APP03':[alias:'QC_APP03', host:'10.24.7.183', port:'5555'],
@@ -402,19 +435,19 @@ def getTargetConfigs(envName, scopeCsv) {
         'QC_APP06':[alias:'QC_APP06', host:'10.24.7.186', port:'5555']
     ]
 
-    def allowed = [
+    def allowedTargetsByEnvironment = [
         DEV : ['QC_APP01', 'QC_APP04'],
         QC  : ['QC_APP02', 'QC_APP05'],
         PROD: ['QC_APP03', 'QC_APP06']
     ]
 
-    def selected = getSelected(scopeCsv)
+    def selectedTargets = getSelected(scopeCsv)
 
-    selected.each {
-        if (!allowed[envName].contains(it)) {
-            error("${it} not allowed for ${envName}")
+    selectedTargets.each { selectedTarget ->
+        if (!allowedTargetsByEnvironment[envName].contains(selectedTarget)) {
+            error("${selectedTarget} not allowed for ${envName}")
         }
     }
 
-    return selected.collect { map[it] }
+    return selectedTargets.collect { selectedTarget -> targetConfigMap[selectedTarget] }
 }
