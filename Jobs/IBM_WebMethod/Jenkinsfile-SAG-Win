@@ -66,7 +66,7 @@ properties([
             $class: 'ChoiceParameter',
             choiceType: 'PT_CHECKBOX',
             name: 'PACKAGES_TO_BUILD',
-            description: 'Select Packages',
+            description: 'Select packages',
             filterable: true,
             filterLength: 2,
             script: [
@@ -92,26 +92,21 @@ properties([
 ])
 
 pipeline {
-    agent { label 'SAG_NODE' }
-
-    tools {
-        jdk 'JDK_HOME'
-        ant 'ANT_HOME'
-    }
+    agent { label 'built-in' }
 
     options {
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '4'))
+        buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
     }
 
     environment {
-        SAG_HOME              = '/sag/dbp1011'
+        SAG_HOME              = 'C:/sag/dbp1011'
 
         ABE_BUILD_FILE        = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
         DEPLOYER_BIN          = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
-        PROJECT_AUTOMATOR     = "${DEPLOYER_BIN}/projectautomatorUnix.sh"
-        DEPLOYER_CMD          = "${DEPLOYER_BIN}/Deployer.sh"
+        PROJECT_AUTOMATOR     = "${DEPLOYER_BIN}/projectautomator.bat"
+        DEPLOYER_CMD          = "${DEPLOYER_BIN}/Deployer.bat"
 
         TEMP_SRC              = "${WORKSPACE}/.tmp_build_src"
         BUILD_OUTPUT_DIR      = "${WORKSPACE}/build_output"
@@ -149,17 +144,7 @@ pipeline {
                     if (selectedPackages.isEmpty()) {
                         error("Select at least one package")
                     }
-
-                    if (!fileExists(env.ABE_BUILD_FILE)) {
-                        error("ABE build.xml not found: ${env.ABE_BUILD_FILE}")
-                    }
                 }
-
-                sh """
-                    set -e
-                    test -x "${env.PROJECT_AUTOMATOR}" || { echo "projectautomatorUnix.sh not found or not executable: ${env.PROJECT_AUTOMATOR}"; exit 1; }
-                    test -x "${env.DEPLOYER_CMD}" || { echo "Deployer.sh not found or not executable: ${env.DEPLOYER_CMD}"; exit 1; }
-                """
 
                 script {
                     echo "NODE_NAME         : ${env.NODE_NAME}"
@@ -224,54 +209,35 @@ pipeline {
 
         stage('Prepare Build Source') {
             steps {
-                sh """
-                    set -e
-                    rm -rf "${env.TEMP_SRC}" "${env.BUILD_OUTPUT_DIR}" "${env.GENERATED_DIR}"
-                    mkdir -p "${env.TEMP_SRC}/packages"
-                    mkdir -p "${env.BUILD_OUTPUT_DIR}"
-                    mkdir -p "${env.GENERATED_DIR}"
-                """
+                bat """
+@echo off
+if exist "%WORKSPACE%\\.tmp_build_src" rmdir /s /q "%WORKSPACE%\\.tmp_build_src"
+if exist "%WORKSPACE%\\build_output" rmdir /s /q "%WORKSPACE%\\build_output"
+if exist "%WORKSPACE%\\generated" rmdir /s /q "%WORKSPACE%\\generated"
+
+mkdir "%WORKSPACE%\\.tmp_build_src\\packages"
+mkdir "%WORKSPACE%\\build_output"
+mkdir "%WORKSPACE%\\generated"
+"""
 
                 script {
                     def packages = getSelected(params.PACKAGES_TO_BUILD)
 
                     for (pkg in packages) {
-                        sh """
-                            set -e
-                            test -d "${WORKSPACE}/Packages/${pkg}" || { echo "Missing package: ${pkg}"; exit 1; }
-                            mkdir -p "${env.TEMP_SRC}/packages/${pkg}"
-                            cp -R "${WORKSPACE}/Packages/${pkg}/." "${env.TEMP_SRC}/packages/${pkg}/"
-                        """
+                        bat """
+@echo off
+if not exist "%WORKSPACE%\\Packages\\${pkg}" (
+  echo Missing package: ${pkg}
+  exit /b 1
+)
+
+if not exist "%WORKSPACE%\\.tmp_build_src\\packages\\${pkg}" mkdir "%WORKSPACE%\\.tmp_build_src\\packages\\${pkg}"
+
+xcopy "%WORKSPACE%\\Packages\\${pkg}\\*" "%WORKSPACE%\\.tmp_build_src\\packages\\${pkg}\\" /E /I /Y >nul
+if errorlevel 1 exit /b 1
+"""
                     }
                 }
-            }
-        }
-
-        stage('ABE Build') {
-            steps {
-                sh """
-                    set -e
-
-                    ant -f "${env.ABE_BUILD_FILE}" build \\
-                      -Dsag.install.dir="${env.SAG_HOME}" \\
-                      -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" \\
-                      -Dbuild.source.dir="${env.TEMP_SRC}" \\
-                      -Denable.checkout=false \\
-                      -Denable.archive=false \\
-                      -Denable.build.IS=true \\
-                      -Denable.build.MWS=false \\
-                      -Denable.build.BPM=false \\
-                      -Denable.build.TN=false \\
-                      -Denable.build.Optimize=false \\
-                      -Denable.build.Broker=false \\
-                      -Denable.build.EDA=false \\
-                      -Denable.build.RULES=false \\
-                      -Denable.build.UniversalMessaging=false \\
-                      -Dbuild.log.enable=true \\
-                      -Dbuild.log.fileName="${env.BUILD_LOG_FILE}" \\
-                      -Dbuild.logLevel=INFO \\
-                      -Dbuild.exit.error=true
-                """
             }
         }
 
@@ -291,7 +257,7 @@ pipeline {
                     xml = xml.replace('@DEPLOYMENT_MAP_NAME@', names.DEPLOYMENT_MAP_NAME)
                     xml = xml.replace('@CANDIDATE_NAME@', names.CANDIDATE_NAME)
                     xml = xml.replace('@REPO_ALIAS@', env.REPO_ALIAS)
-                    xml = xml.replace('@REPO_DIRECTORY@', env.BUILD_OUTPUT_DIR)
+                    xml = xml.replace('@REPO_DIRECTORY@', env.BUILD_OUTPUT_DIR.replace('\\', '/'))
                     xml = xml.replace('@IS_ALIASES@', buildISAliases(targets))
                     xml = xml.replace('@MAP_TARGET_ALIASES@', buildMapTargetAliases(targets))
                     xml = xml.replace('@DEPLOYMENT_ENTRIES@', buildRepositoryEntries(packages, env.REPO_ALIAS))
@@ -303,6 +269,35 @@ pipeline {
                     echo readFile(file: env.GENERATED_XML, encoding: 'UTF-8')
                     echo "===== GENERATED XML END ====="
                 }
+            }
+        }
+
+        /*
+        stage('ABE Build') {
+            steps {
+                bat """
+@echo off
+call "${env.SAG_HOME}\\common\\lib\\ant\\bin\\ant.bat" -f "${env.ABE_BUILD_FILE}" build ^
+  -Dsag.install.dir="${env.SAG_HOME}" ^
+  -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" ^
+  -Dbuild.source.dir="${env.TEMP_SRC}" ^
+  -Denable.checkout=false ^
+  -Denable.archive=false ^
+  -Denable.build.IS=true ^
+  -Denable.build.MWS=false ^
+  -Denable.build.BPM=false ^
+  -Denable.build.TN=false ^
+  -Denable.build.Optimize=false ^
+  -Denable.build.Broker=false ^
+  -Denable.build.EDA=false ^
+  -Denable.build.RULES=false ^
+  -Denable.build.UniversalMessaging=false ^
+  -Dbuild.log.enable=true ^
+  -Dbuild.log.fileName="${env.BUILD_LOG_FILE}" ^
+  -Dbuild.logLevel=INFO ^
+  -Dbuild.exit.error=true
+if errorlevel 1 exit /b 1
+"""
             }
         }
 
@@ -318,13 +313,14 @@ pipeline {
                         variable: 'IS_PWD'
                     )
                 ]) {
-                    sh """
-                        set -e
-                        export DEP_PWD="${DEP_PWD}"
-                        export IS_PWD="${IS_PWD}"
+                    bat """
+@echo off
+set "DEP_PWD=%DEP_PWD%"
+set "IS_PWD=%IS_PWD%"
 
-                        "${env.PROJECT_AUTOMATOR}" "${env.GENERATED_XML}"
-                    """
+call "${env.PROJECT_AUTOMATOR}" "${env.GENERATED_XML}"
+if errorlevel 1 exit /b 1
+"""
                 }
             }
         }
@@ -338,26 +334,25 @@ pipeline {
                         string(
                             credentialsId: 'deployer-creds',
                             variable: 'DEP_PWD'
+                        ),
+                        string(
+                            credentialsId: 'IS-creds',
+                            variable: 'IS_PWD'
                         )
                     ]) {
-                        sh """
-                            set -e
-                            export DEP_PWD="${DEP_PWD}"
+                        bat """
+@echo off
+set "DEP_PWD=%DEP_PWD%"
+set "IS_PWD=%IS_PWD%"
 
-                            "${env.DEPLOYER_CMD}" \\
-                              --deploy \\
-                              -project "${names.PROJECT_NAME}" \\
-                              -dc "${names.CANDIDATE_NAME}" \\
-                              -host "${env.DEPLOYER_HOST}" \\
-                              -port "${env.DEPLOYER_PORT}" \\
-                              -user "Administrator" \\
-                              -pwd "${DEP_PWD}" \\
-                              -force
-                        """
+call "${env.DEPLOYER_CMD}" --deploy -project "${names.PROJECT_NAME}" -dc "${names.CANDIDATE_NAME}" -host "${env.DEPLOYER_HOST}" -port "${env.DEPLOYER_PORT}" -user "Administrator" -pwd "%DEP_PWD%" -force
+if errorlevel 1 exit /b 1
+"""
                     }
                 }
             }
         }
+        */
 
         stage('Archive Artifacts') {
             steps {
@@ -368,10 +363,10 @@ pipeline {
 
     post {
         success {
-            echo "Deployment completed successfully."
+            echo "Test pipeline completed successfully."
         }
         failure {
-            echo "Deployment failed. Check ABE build output, generated XML, and Deployer logs."
+            echo "Test pipeline failed. Check workspace paths and generated XML."
         }
         always {
             echo "Pipeline execution finished."
@@ -390,14 +385,14 @@ def getSelected(val) {
 }
 
 def buildNames(epic, environment) {
-    def epicname = epic.trim()
+    def safeEpic = epic.trim()
 
     return [
-        PROJECT_NAME        : epicname,
-        PROJECT_DESC        : "${epicname} - ${environment}",
-        DEPLOYMENT_SET_NAME : "${epicname}_DEPLOYMENT_SET",
-        DEPLOYMENT_MAP_NAME : "${epicname}_DEPLOYMENT_MAP",
-        CANDIDATE_NAME      : epicname
+        PROJECT_NAME        : safeEpic,
+        PROJECT_DESC        : "${safeEpic} - ${environment}",
+        DEPLOYMENT_SET_NAME : "${safeEpic}_DEPLOYMENT_SET",
+        DEPLOYMENT_MAP_NAME : "${safeEpic}_DEPLOYMENT_MAP",
+        CANDIDATE_NAME      : safeEpic
     ]
 }
 
