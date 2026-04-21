@@ -353,10 +353,32 @@ if errorlevel 1 exit /b 1
             }
         }
         */
+stage('Prepare Test Artifacts') {
+    steps {
+        script {
+            // create epic.txt
+            writeFile file: 'epic.txt', text: params.EPIC_NAME.trim()
 
+            // create folder structure like ABE output
+            bat """
+@echo off
+mkdir build_output\\IS
+"""
+
+            // create dummy zip files (for testing only)
+            bat """
+@echo off
+echo test > build_output\\IS\\TawnMotorNonRetail.zip
+echo test > build_output\\IS\\TawnSMESalesCRM.zip
+"""
+        }
+    }
+}
         stage('Archive Artifacts') {
             steps {
-                archiveArtifacts artifacts: 'generated/*.xml, generated/*.log', allowEmptyArchive: true
+                bat 'echo %EPIC_NAME% > epic.txt'
+                
+                archiveArtifacts artifacts: 'epic.txt, build_output/IS/*.zip, generated/*.xml', allowEmptyArchive: true
             }
         }
     }

@@ -361,7 +361,8 @@ pipeline {
 
         stage('Archive Artifacts') {
             steps {
-                archiveArtifacts artifacts: 'generated/*.xml, generated/*.log', allowEmptyArchive: true
+                writeFile file: 'epic.txt', text: params.EPIC_NAME.trim()
+                archiveArtifacts artifacts: 'epic.txt, generated/*.xml, generated/*.log', allowEmptyArchive: true
             }
         }
     }
