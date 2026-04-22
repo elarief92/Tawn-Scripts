@@ -1,0 +1,125 @@
+pipeline {
+    agent {
+        node {
+            label 'SonarQube'
+        }
+    }
+
+    parameters {
+        choice(name: 'BRANCH_NAME', choices: ['DEV', 'QC', 'UAT', 'PROD'], description: 'Select the branch to scan')
+        string(name: 'Project_Version', defaultValue: '1.0.0', description: 'Enter the version for this analysis')
+    }
+
+    environment {
+        SONAR_SCANNER_JRE_PROVISIONING = 'false'
+        SONAR_USER_HOME = 'E:\\.sonar_cache'
+
+        SOLUTION_FILE = 'Tcs.Crm.LifeSales.sln'
+        BUILD_CONFIGURATION = 'Release'
+        BUILD_PLATFORM = 'Any CPU'
+
+        // Jenkins tool names - adjust if your names are different
+        SCANNER_HOME = tool('Scanner for .Net Framework')
+        MSBUILD_HOME = tool('MSBuild_17')
+        NUGET_HOME   = tool('NuGet_6')
+    }
+
+    stages {
+        stage('Set Build Name') {
+            steps {
+                script {
+                    currentBuild.displayName = "#${BUILD_NUMBER}-${params.BRANCH_NAME}"
+                }
+            }
+        }
+
+        stage("Checkout (${params.BRANCH_NAME})") {
+            steps {
+                deleteDir()
+
+                bbs_checkout(
+                    branches: [[name: "*/${params.BRANCH_NAME}"]],
+                    credentialsId: 'Admin_Bitbucket',
+                    id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+                    projectName: 'DXP',
+                    repositoryName: 'tcs',
+                    serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+                )
+            }
+        }
+
+        stage('Restore packages') {
+            steps {
+                bat """
+                "${env.NUGET_HOME}\\nuget.exe" restore "${env.SOLUTION_FILE}"
+                """
+            }
+        }
+
+        stage('SonarQube Begin') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    bat """
+                    "${env.SCANNER_HOME}\\SonarScanner.MSBuild.exe" begin ^
+                      /k:"MSCRM_tcs_26e92cd9-30e5-4f07-a665-a655f806b137" ^
+                      /n:"Tawuniya-CRM" ^
+                      /v:"${params.Project_Version}-${env.BUILD_NUMBER}" ^
+                      /d:sonar.branch.name="${params.BRANCH_NAME}" ^
+                      /d:sonar.sourceEncoding="UTF-8" ^
+                      /d:sonar.verbose=true
+                    """
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                bat """
+                "${env.MSBUILD_HOME}\\MSBuild.exe" "${env.SOLUTION_FILE}" ^
+                  /t:Rebuild ^
+                  /p:Configuration="${env.BUILD_CONFIGURATION}" ^
+                  /p:Platform="${env.BUILD_PLATFORM}" ^
+                  /m
+                """
+            }
+        }
+/*
+       //  Enable this stage later only if you have a real test project + coverage
+         stage('Running unit tests') {
+             steps {
+                 bat """
+                 dotnet test "PATH\\TO\\YOUR_TEST_PROJECT.csproj" ^
+                   -c ${env.BUILD_CONFIGURATION} ^
+                   --no-build ^
+                   /p:CollectCoverage=true ^
+                   /p:CoverletOutput=TestResults\\coverage. ^
+                   /p:CoverletOutputFormat=opencover
+                 """
+             }
+         }
+*/
+        stage('SonarQube End') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    bat """
+                    "${env.SCANNER_HOME}\\SonarScanner.MSBuild.exe" end
+                    """
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Full .NET Sonar scan completed for ${params.BRANCH_NAME}"
+        }
+    }
+}
