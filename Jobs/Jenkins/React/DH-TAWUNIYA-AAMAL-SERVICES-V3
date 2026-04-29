@@ -8,7 +8,7 @@ pipeline {
   }
 
   environment {
-    BRANCH_NAME = 'QC'
+    BRANCH_NAME = 'DEV'
     NODE_TLS_REJECT_UNAUTHORIZED = '0'
   }
 
