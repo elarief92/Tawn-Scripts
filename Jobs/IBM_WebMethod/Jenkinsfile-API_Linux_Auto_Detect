@@ -71,7 +71,7 @@ pipeline {
 
     options {
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        buildDiscarder(logRotator(numToKeepStr: '3'))
         timestamps()
     }
 
@@ -532,7 +532,7 @@ def buildNames(epic, environmentName) {
 
     return [
         PROJECT_NAME        : safeEpic,
-        PROJECT_DESC        : "${safeEpic} - ${environmentName}",
+        PROJECT_DESC        : "Project created for EPIC ${safeEpic} on ${environmentName} environment",
         DEPLOYMENT_SET_NAME : "${safeEpic}_DEPLOYMENT_SET",
         DEPLOYMENT_MAP_NAME : "${safeEpic}_DEPLOYMENT_MAP",
         CANDIDATE_NAME      : safeEpic
