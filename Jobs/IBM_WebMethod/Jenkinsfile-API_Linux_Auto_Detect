@@ -340,7 +340,36 @@ export IS_PWD="manage"
     }
 }
 
+stage('Deploy Candidate') {
+    steps {
+        script {
+            def names = buildNames(params.EPIC_NAME, params.ENVIRONMENT)
 
+            if (!fileExists(env.DEPLOYER_CMD)) {
+                error("Deployer command not found: ${env.DEPLOYER_CMD}")
+            }
+
+            sh """
+echo "Deploying Candidate..."
+echo "Project   : ${names.PROJECT_NAME}"
+echo "Candidate : ${names.CANDIDATE_NAME}"
+echo "Host      : ${env.DEPLOYER_HOST}"
+echo "Port      : ${env.DEPLOYER_PORT}"
+
+chmod +x "${env.DEPLOYER_CMD}" || true
+
+"${env.DEPLOYER_CMD}" --deploy \\
+  -project "${names.PROJECT_NAME}" \\
+  -dc "${names.CANDIDATE_NAME}" \\
+  -host "${env.DEPLOYER_HOST}" \\
+  -port "${env.DEPLOYER_PORT}" \\
+  -user "Administrator" \\
+  -pwd "manage" \\
+  -force
+"""
+        }
+    }
+}
 
         stage('Test Updated Packages') {
             steps {
@@ -552,7 +581,7 @@ def getEnvironmentConfig(envName) {
 
 def getTargetConfigs(envName, scopeCsv) {
     def targetConfigMap = [
-        'DEV_APP01':[alias:'DEV_APP01', host:'10.24.7.171', port:'5555'],
+        'DEV_APP01':[alias:'DEV_APP01', host:'10.24.2.118', port:'5555'],
         'DEV_APP02':[alias:'DEV_APP02', host:'10.24.7.172', port:'5555'],
         'QC_APP01' :[alias:'QC_APP01',  host:'10.24.7.181', port:'5555'],
         'QC_APP04' :[alias:'QC_APP04',  host:'10.24.7.184', port:'5555'],
