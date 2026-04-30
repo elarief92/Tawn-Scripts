@@ -39,7 +39,7 @@ pipeline {
               resetCmd: '',
               installCmd: 'npm install --legacy-peer-deps',
               buildCmd: 'npm run build:qc',
-              testCoverageCmd: 'npm run test:coverage'
+              testCoverageCmd: 'npx vitest run --coverage --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 
             artifacts: [
