@@ -67,7 +67,7 @@ properties([
 def CHANGED_PACKAGES = []
 
 pipeline {
-    agent { label 'SAG-PREP-IPP02' }
+    agent { label 'API-DEV-118' }
 
     options {
         disableConcurrentBuilds()
@@ -76,7 +76,7 @@ pipeline {
     }
 
     environment {
-        SAG_HOME              = '/sag/be1015'
+        SAG_HOME              = '/sag/dbp1011'
 
         ABE_BUILD_FILE        = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
         DEPLOYER_BIN          = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
@@ -98,7 +98,6 @@ pipeline {
         EMAIL_RECIPIENTS      = 'melarief@tawuniya.com'
         EMAIL_SUBJECT         = 'API Deployment'
         APPLICATION_NAME      = 'webMethods API'
-        BUILD_TIMESTAMP       = "${new Date().format('yyyy-MM-dd HH:mm:ss')}"
     }
 
     stages {
@@ -145,86 +144,10 @@ pipeline {
         stage('Send Start Email') {
             steps {
                 script {
-                    emailext(
-                        to: "${env.EMAIL_RECIPIENTS}",
-                        subject: "${env.EMAIL_SUBJECT} - Started",
-                        body: """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Deployment Notification</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background-color: #f4f4f4;
-        }
-        .container {
-            width: 600px;
-            margin: 20px auto;
-            padding: 20px;
-            background-color: #fff;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
-            font-weight: bold;
-            font-size: 20px;
-        }
-        h2 {
-            color: #2c3e50;
-        }
-        .details {
-            background-color: #ecf0f1;
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-        }
-        .details p {
-            margin-bottom: 5px;
-        }
-        .footer {
-            font-size: 14px;
-            color: #7f8c8d;
-            text-align: center;
-        }
-        .footer p {
-            margin: 0;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            TAWUNIYA
-        </div>
-        <h2>Deployment Notification</h2>
-        <p>Dears,</p>
-        <p>We are pleased to inform you that a deployment of ${env.APPLICATION_NAME} is started as follows:</p>
-
-        <div class="details">
-            <p><strong>Environment:</strong> ${params.ENVIRONMENT}</p>
-            <p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
-            <p><strong>Deployment Date-Time:</strong> ${env.BUILD_TIMESTAMP}</p>
-        </div>
-
-        <p>Please be advised that this deployment may cause temporary service disruptions. We sincerely apologize for any inconvenience this may cause and appreciate your understanding as we work to improve our services.</p>
-
-        <div class="footer">
-            <p>Thank you for your cooperation.</p>
-            <p><strong>Best regards,</strong><br>The DevOps Team</p>
-        </div>
-    </div>
-</body>
-</html>
-""",
-                        mimeType: 'text/html',
-                        recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                    sendDeploymentEmail(
+                        'Started',
+                        '#f39c12',
+                        "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been started as follows:"
                     )
                 }
             }
@@ -266,7 +189,7 @@ git diff-tree --no-commit-id --name-only -r HEAD
 
                     changedFiles.each { file ->
                         def normalized = file.replace('\\', '/')
-                        def matcher = normalized =~ /(?i)^Packages\/([^\/]+)\//
+                        def matcher = normalized =~ /(?i)^Packages\\/([^\\/]+)\\//
 
                         if (matcher.find()) {
                             packageSet << matcher.group(1)
@@ -412,7 +335,14 @@ export IS_PWD="${IS_PWD}"
 export DEP_PWD="${DEP_PWD}"
 export IS_PWD="${IS_PWD}"
 
-"${env.DEPLOYER_CMD}" --deploy -project "${names.PROJECT_NAME}" -dc "${names.CANDIDATE_NAME}" -host "${env.DEPLOYER_HOST}" -port "${env.DEPLOYER_PORT}" -user "Administrator" -pwd "${DEP_PWD}" -force
+"${env.DEPLOYER_CMD}" --deploy \\
+  -project "${names.PROJECT_NAME}" \\
+  -dc "${names.CANDIDATE_NAME}" \\
+  -host "${env.DEPLOYER_HOST}" \\
+  -port "${env.DEPLOYER_PORT}" \\
+  -user "Administrator" \\
+  -pwd "${DEP_PWD}" \\
+  -force
 """
                     }
                 }
@@ -441,15 +371,120 @@ export IS_PWD="${IS_PWD}"
 
     post {
         success {
-            echo "Pipeline completed successfully."
+            script {
+                sendDeploymentEmail(
+                    'Success',
+                    '#27ae60',
+                    "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:"
+                )
+            }
         }
+
         failure {
-            echo "Pipeline failed. Check changed package detection and generated XML."
+            script {
+                sendDeploymentEmail(
+                    'Failed',
+                    '#c0392b',
+                    "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:"
+                )
+            }
         }
+
         always {
             echo "Pipeline execution finished."
         }
     }
+}
+
+def sendDeploymentEmail(status, color, message) {
+    emailext(
+        to: "${env.EMAIL_RECIPIENTS}",
+        subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status}",
+        mimeType: 'text/html',
+        recipientProviders: [[$class: 'DevelopersRecipientProvider']],
+        body: """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background-color: #f4f4f4;
+        color: #333;
+    }
+    .container {
+        width: 600px;
+        margin: 20px auto;
+        background-color: #ffffff;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .header {
+        background-color: ${color};
+        color: #ffffff;
+        padding: 18px;
+        text-align: center;
+        font-size: 22px;
+        font-weight: bold;
+    }
+    .content {
+        padding: 20px;
+    }
+    .details {
+        background-color: #ecf0f1;
+        padding: 15px;
+        border-radius: 6px;
+        margin: 20px 0;
+    }
+    .details p {
+        margin: 6px 0;
+    }
+    .footer {
+        font-size: 14px;
+        color: #7f8c8d;
+        text-align: center;
+        padding: 15px;
+    }
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        TAWUNIYA - Deployment ${status}
+    </div>
+
+    <div class="content">
+        <p>Dears,</p>
+
+        <p>${message}</p>
+
+        <div class="details">
+            <p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
+            <p><strong>Environment:</strong> ${params.ENVIRONMENT}</p>
+            <p><strong>EPIC:</strong>
+                <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">
+                    ${params.EPIC_NAME}
+                </a>
+            </p>
+            <p><strong>Status:</strong> ${status}</p>
+            <p><strong>Deployment Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
+            <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
+        </div>
+
+        <p>Please be advised accordingly.</p>
+    </div>
+
+    <div class="footer">
+        <p>Thank you for your cooperation.</p>
+        <p><strong>Best regards,</strong><br>The DevOps Team</p>
+    </div>
+</div>
+</body>
+</html>
+"""
+    )
 }
 
 def getSelected(val) {
