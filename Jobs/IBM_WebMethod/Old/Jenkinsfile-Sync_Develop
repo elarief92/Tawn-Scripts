@@ -1,0 +1,177 @@
+pipeline {
+    agent { label 'API-DEV-118' }
+    environment {
+        GIT_URL = 'https://bitbucket.tawn.com/scm/ei/eidevopsassests.git'
+        GitHost = 'bitbucket.tawn.com/scm/ei/eidevopsassests.git'
+        CREDENTIALS_ID = 'Admin_Bitbucket'
+
+        // Set the Java home path and update the PATH
+        JAVA_HOME = '/home/apiadmin/jdk-21.0.4'
+        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+         // EMAIL Details
+        
+        //EPIC_CONTENT = '' // Placeholder for the environment variable
+        EMAIL_RECIPIENTS = 'KSoni@tawuniya.com'
+        EMAIL_SUBJECT = 'Sync Master Notification: $JOB_BASE_NAME #${BUILD_NUMBER}'
+        APPLICATION_NAME = 'EAI'
+    }
+    stages {
+            stage('Clean Workspace') {
+            steps {
+                deleteDir() /* Clean the workspace */
+                }
+            }
+        
+     /**    stage('Send Start Email') {
+                    agent { label 'built-in' }
+                    steps {
+                        script {
+                            emailext (
+                                to: "${EMAIL_RECIPIENTS}",
+                                subject: "${EMAIL_SUBJECT} - Started",
+                                body: """\
+                                <!DOCTYPE html>
+        						<html lang="en">
+        						<head>
+        							<meta charset="UTF-8">
+        							<meta name="viewport" content="width=device-width, initial-scale=1.0">
+        							<title>Deployment Notification</title>
+        							<style>
+        								body {
+        									font-family: Arial, sans-serif;
+        									line-height: 1.6;
+        									color: #333; 
+        									background-color: #f4f4f4; 
+        								}
+        								.container {
+        									width: 600px;
+        									margin: 20px auto;
+        									padding: 20px;
+        									background-color: #fff;
+        									border-radius: 8px;
+        									box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        								}
+        								.header {
+        									text-align: center;
+        									margin-bottom: 20px;
+        								}
+        								.logo {
+        									max-width: 200px;
+        								}
+        								h2 {
+        									color: #2c3e50; 
+        								}
+        								.details {
+        									background-color: #ecf0f1;
+        									padding: 15px;
+        									border-radius: 6px;
+        									margin-bottom: 20px;
+        								}
+        								.details p {
+        									margin-bottom: 5px;
+        								}
+        								.footer {
+        									font-size: 14px;
+        									color: #7f8c8d;
+        									text-align: center; 
+        								}
+        								.footer p {
+        									margin: 0; 
+        								}
+        							</style>
+        						</head>
+        						<body>
+        							<div class="container">
+        								<div class="header">
+        									TAWUNIYA
+        								</div>
+        								<h2>Deployment Notification</h2>
+        								<p>Dears,</p>
+        								<p>We are pleased to inform you that master is being synced with develop, qc and uat for ${APPLICATION_NAME} is started as follows:</p>
+        
+        								<div class="details">
+        							
+        									<p><strong>Sync Date-Time:</strong> ${BUILD_TIMESTAMP}</p>
+        								</div>
+        
+        								<p>Please be advised that this deployment may cause temporary service disruptions. We sincerely apologize for any inconvenience this may cause and appreciate your understanding as we work to improve our services.</p>
+        
+        							   <div style="text-align: center;"> <a href="#" class="cta-button">View Details</a></div> <div class="footer">
+        									<p>Thank you for your cooperation.</p>
+        									<p><strong>Best regards,</strong><br>The DevOps Team</p>
+        								</div>
+        							</div>
+        						</body>
+        						</html>
+                                """,
+                                mimeType: 'text/html',
+                                recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                            )
+                        }
+                    }
+                }
+    **/
+    
+        stage('Sync Dev') {
+            steps {
+               script {
+                   echo "DEV"
+                    withCredentials([usernamePassword(credentialsId: 'Admin_Bitbucket', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    
+                    def encodedPassword = URLEncoder.encode("$PASSWORD",'UTF-8')
+                    
+                    sh """
+                        git version
+                        git config --global user.email "${USERNAME}"
+                        git config --global user.name "${USERNAME}"
+                        git config --list
+                        
+                        git clone https://${USERNAME}:${encodedPassword}@${GitHost}
+                        pwd
+                        cd /home/apiadmin/jenkins/workspace/API/Sync_Develop/eidevopsassests/
+                        git checkout develop
+                        git pull https://${USERNAME}:${encodedPassword}@${GitHost} develop
+                        git branch -a
+                        git merge master
+                        git push https://${USERNAME}:${encodedPassword}@${GitHost} develop
+                        
+                    """
+                }
+                }
+            }
+        }
+
+        
+	
+    }
+}
+/**	post {
+        success {
+            script {
+                emailext (
+                    to: "${EMAIL_RECIPIENTS}",
+                    subject: "${EMAIL_SUBJECT} - Success",
+                    body: """\
+                    <p>Build Job: "$JOB_BASE_NAME"</p>
+                    <p>Status: The Job "$JOB_BASE_NAME" Has Successfully Merged</p>
+                    """,
+                    recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                )
+            }
+        }
+        failure {
+            script {
+                emailext (
+                    to: "${EMAIL_RECIPIENTS}",
+                    subject: "${EMAIL_SUBJECT} - Failed",
+                    body: """\
+                    <p>Build Job: "$JOB_BASE_NAME"</p>
+                    <p>Status: The Job "$JOB_BASE_NAME" Has Failed</p>
+                    """,
+                    recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                )
+            }
+        }
+    }
+  **/  
+}

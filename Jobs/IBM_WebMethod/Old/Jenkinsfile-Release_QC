@@ -1,0 +1,253 @@
+def Deployer_Project = ""
+
+pipeline {
+    agent { label 'API-DEV-118' }
+    parameters {
+        //choice(name: 'ENVIRONMENT', choices: ['DEV', 'QC', 'UAT', 'PROD', 'DR'], description: 'Specify the environment')
+        string(name: 'EPIC_NAME', defaultValue: '', description: 'Must Enter Epic Name')
+    }
+    environment {
+        GIT_URL = 'https://bitbucket.tawn.com/scm/ei/eidevopsassests.git'
+        CREDENTIALS_ID = 'Admin_Bitbucket'
+        DEPLOY_HOST = '10.24.2.118'
+        DEPLOY_PORT = '5555'
+        DEPLOY_USER = 'Administrator'
+        DEPLOY_PWD = 'manage'
+
+        // Set the Java home path and update the PATH
+        JAVA_HOME = '/home/apiadmin/jdk-21.0.4'
+        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+         // EMAIL Details
+        
+        //EPIC_CONTENT = '' // Placeholder for the environment variable
+        EMAIL_RECIPIENTS = 'KSoni@tawuniya.com'
+        EMAIL_SUBJECT = 'Deployment Notification: $JOB_BASE_NAME #${BUILD_NUMBER}'
+        APPLICATION_NAME = 'EAI'
+        
+        NO_PR = ""
+    }
+    stages {
+        stage('Send Start Email') {
+                    agent { label 'built-in' }
+                    steps {
+                        script {
+                            emailext (
+                                to: "${EMAIL_RECIPIENTS}",
+                                subject: "${EMAIL_SUBJECT} - Started",
+                                body: """\
+                                <!DOCTYPE html>
+        						<html lang="en">
+        						<head>
+        							<meta charset="UTF-8">
+        							<meta name="viewport" content="width=device-width, initial-scale=1.0">
+        							<title>Deployment Notification</title>
+        							<style>
+        								body {
+        									font-family: Arial, sans-serif;
+        									line-height: 1.6;
+        									color: #333; 
+        									background-color: #f4f4f4; 
+        								}
+        								.container {
+        									width: 600px;
+        									margin: 20px auto;
+        									padding: 20px;
+        									background-color: #fff;
+        									border-radius: 8px;
+        									box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        								}
+        								.header {
+        									text-align: center;
+        									margin-bottom: 20px;
+        								}
+        								.logo {
+        									max-width: 200px;
+        								}
+        								h2 {
+        									color: #2c3e50; 
+        								}
+        								.details {
+        									background-color: #ecf0f1;
+        									padding: 15px;
+        									border-radius: 6px;
+        									margin-bottom: 20px;
+        								}
+        								.details p {
+        									margin-bottom: 5px;
+        								}
+        								.footer {
+        									font-size: 14px;
+        									color: #7f8c8d;
+        									text-align: center; 
+        								}
+        								.footer p {
+        									margin: 0; 
+        								}
+        							</style>
+        						</head>
+        						<body>
+        							<div class="container">
+        								<div class="header">
+        									TAWUNIYA
+        								</div>
+        								<h2>Deployment Notification</h2>
+        								<p>Dears,</p>
+        								<p>We are pleased to inform you that a deployment of ${APPLICATION_NAME} is started as follows:</p>
+        
+        								<div class="details">
+        									<p><strong>Environment:</strong> QC</p>
+        									<p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
+        									<p><strong>Deployment Date-Time:</strong> ${BUILD_TIMESTAMP}</p>
+        								</div>
+        
+        								<p>Please be advised that this deployment may cause temporary service disruptions. We sincerely apologize for any inconvenience this may cause and appreciate your understanding as we work to improve our services.</p>
+        
+        							   <div style="text-align: center;"> <a href="#" class="cta-button">View Details</a></div> <div class="footer">
+        									<p>Thank you for your cooperation.</p>
+        									<p><strong>Best regards,</strong><br>The DevOps Team</p>
+        								</div>
+        							</div>
+        						</body>
+        						</html>
+                                """,
+                                mimeType: 'text/html',
+                                recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                            )
+                        }
+                    }
+                }
+        stage('Checkout') {
+            steps {
+                script{
+                if (params.EPIC_NAME == null || params.EPIC_NAME.isEmpty()) {
+                        error("The parameter EPIC_NAME is required.")
+                    } else {
+                        echo "Parameter EPIC_NAME is: ${params.EPIC_NAME}"
+                        
+                    }
+                }
+                checkout([$class: 'GitSCM', branches: [[name: '*/qc']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: "${env.CREDENTIALS_ID}", url: "${env.GIT_URL}"]]])
+            }
+        }
+        stage('Build') {
+            steps {
+                script {
+                    
+				    sh "rm -rf /sag/CICD/packagesCopy/*"
+					def changedFiles = ""
+					def epicsList = params.EPIC_NAME.split(",")
+                    def epicCount = epicsList.size()
+                    def NO_PR = "${epicCount}"
+                    echo "Number of Epics: ${NO_PR}"
+                    def noPrInt = NO_PR.toInteger()  
+                    echo "noPrInt ${noPrInt}"
+					if (noPrInt > 1) {
+					    echo "if"
+					    def diffCommit = "HEAD^${NO_PR}"
+					    echo "diffCommit ${diffCommit}"
+					    changedFiles = sh(returnStdout: true, script: """
+                        git diff --name-only ${diffCommit} HEAD
+                    """).trim().split('\n')
+					} else {
+					    echo "else"
+					    changedFiles = sh(returnStdout: true, script: '''
+                        git diff --name-only HEAD^ HEAD
+                    ''').trim().split('\n')
+					}
+					
+                    
+                    echo "changedFiles ${changedFiles}"
+                    
+                    def packageList = [] as Set
+                    
+                    changedFiles.each { file ->
+                        def matcher = file =~ /packages\/(.*?)\//
+                    
+                        if (matcher.find()) {
+                            packageList << matcher.group(1)  // Add package name to list
+                        }
+                    }
+                    
+                    println "Package Names: ${packageList}"
+
+                    packageList.each { packageName ->
+                           echo "move package ${packageName}"
+                           sh "cp -r /home/apiadmin/jenkins/workspace/API/Release_QC/webMethods/IS/packages/${packageName} /sag/CICD/packagesCopy/"
+                        }
+                    
+				    sh 'echo "Building WebMethods project..."'
+                    sh "rm -rf /sag/CICD/ISBuild/*"
+                    sh '/sag/dbp1011/common/AssetBuildEnvironment/bin/build.sh'
+                }
+            }
+        }
+        
+
+        stage('Deploy') {
+            steps {
+                script {
+                    def updateAutomatorFile = "/sag/WmTawuniyaCICD/deployer/updateAutomatorQC.xml"
+                    def dateStr = sh(script: "date +%-d-%b-%Y-%H-%M", returnStdout: true).trim()
+                    def epic_name = params.EPIC_NAME.replace(",", "_")
+                    def epicname = "${epic_name}-QC-${dateStr}"
+                    
+                    Deployer_Project = "$epicname"
+                    
+                    echo "epicname $epicname"
+
+                    sh "cp /sag/WmTawuniyaCICD/deployer/Deployment_ProjectAutomator_backup.xml /sag/WmTawuniyaCICD/deployer/Deployment_ProjectAutomator.xml"
+
+                    echo "Executing Ant build with: /sag/dbp1011/common/lib/ant/bin/ant -f ${updateAutomatorFile} -Dbuild.output.dir=/sag/CICD/ISBuild -Depic.name.env.date=${epicname}"
+                    sh "/sag/dbp1011/common/lib/ant/bin/ant -f ${updateAutomatorFile} -Dbuild.output.dir=/sag/CICD/ISBuild -Depic.name.env.date=${epicname}"
+
+                    sh "/sag/dbp1011/IntegrationServer/instances/default/packages/WmDeployer/bin/projectautomatorUnix.sh /sag/WmTawuniyaCICD/deployer/Deployment_ProjectAutomator.xml"
+                    sh "/sag/dbp1011/IntegrationServer/instances/default/packages/WmDeployer/bin/Deployer.sh --deploy -dc Deployment_Candidate -project ${epicname} -host ${env.DEPLOY_HOST} -port ${env.DEPLOY_PORT} -user ${env.DEPLOY_USER} -pwd ${env.DEPLOY_PWD}"
+                }
+            }
+        }
+	}
+	post {
+        success {
+            script {
+                emailext (
+                    to: "${EMAIL_RECIPIENTS}",
+                    subject: "${EMAIL_SUBJECT} - Success",
+                    body: """\
+                    <p>Build Job: "$JOB_BASE_NAME"</p>
+                    <p>Status: The Job "$JOB_BASE_NAME" Has Successfully Deployed</p>
+                    <div class="details">
+						<p><strong>Environment:</strong> QC</p>
+						<p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
+						<p><strong>Deployment Date-Time:</strong> ${BUILD_TIMESTAMP}</p>
+						<p><strong>Deployer Project: </strong>${Deployer_Project} </p>
+					</div>
+                    """,
+                  //  recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                )
+            }
+        }
+        failure {
+            script {
+                emailext (
+                    to: "${EMAIL_RECIPIENTS}",
+                    subject: "${EMAIL_SUBJECT} - Failed",
+                    attachLog: true,
+                    body: """\
+                    <p>Build Job: "$JOB_BASE_NAME"</p>
+                    <p>Status: The Job "$JOB_BASE_NAME" Has Failed</p>
+                    <div class="details">
+						<p><strong>Environment:</strong> QC</p>
+						<p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
+						<p><strong>Deployment Date-Time:</strong> ${BUILD_TIMESTAMP}</p>
+						
+					</div>
+                    """,
+                    recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                )
+            }
+        }
+    }
+    
+}
+
+    

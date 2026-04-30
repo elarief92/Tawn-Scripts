@@ -1,0 +1,72 @@
+def Deployer_Project = ""
+def LAST_MERGE_COMMIT = ""
+pipeline {
+    agent { label 'API-DEV-118' }
+    environment {
+        GIT_URL = 'https://bitbucket.tawn.com/scm/ei/eidevopsassests.git'
+        CREDENTIALS_ID = 'Admin_Bitbucket'
+        DEPLOY_HOST = '10.24.2.118'
+        DEPLOY_PORT = '5555'
+        DEPLOY_USER = 'Administrator'
+        DEPLOY_PWD = 'manage'
+
+        // Set the Java home path and update the PATH
+        JAVA_HOME = '/home/apiadmin/jdk-21.0.4'
+        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+         // EMAIL Details
+        
+        //EPIC_CONTENT = '' // Placeholder for the environment variable
+        EMAIL_RECIPIENTS = 'KSoni@tawuniya.com'
+        EMAIL_SUBJECT = 'Deployment Notification: $JOB_BASE_NAME #${BUILD_NUMBER}'
+        APPLICATION_NAME = 'EAI'
+        
+        NO_PR = ""
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                script{
+                checkout([$class: 'GitSCM', branches: [[name: '*/qc']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: "${env.CREDENTIALS_ID}", url: "${env.GIT_URL}"]]])
+            }
+        }
+        }
+        stage('Find Last Merge Commit') {
+            steps {
+                script {
+                    def lastMergeCommit = sh(script: "git log --merges --oneline -n 1 | awk '{print \$1}'", returnStdout: true).trim()
+                    
+                    LAST_MERGE_COMMIT = "${lastMergeCommit}"
+                    
+                    echo "LAST_MERGE_COMMIT : ${LAST_MERGE_COMMIT}"
+                    echo " Start merge"
+                    
+                    deleteDir()
+                    
+                    withCredentials([usernamePassword(credentialsId: 'Admin_Bitbucket', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    
+                    def encodedPassword = URLEncoder.encode("$PASSWORD",'UTF-8')
+                    def GitHost = "bitbucket.tawn.com/scm/ei/eidevopsassests.git"
+                    sh """
+                        ls
+                        git version
+                        git config --global user.email "${USERNAME}"
+                        git config --global user.name "${USERNAME}"
+                        git config --list
+                        
+                        git clone https://${USERNAME}:${encodedPassword}@${GitHost}
+                        pwd
+                        cd /home/apiadmin/jenkins/workspace/API/Rollback_QC/eidevopsassests/
+                        git checkout qc
+                        git pull https://${USERNAME}:${encodedPassword}@${GitHost} qc
+                        git revert -m 1 ${LAST_MERGE_COMMIT}
+                        git push https://${USERNAME}:${encodedPassword}@${GitHost} qc
+                        
+                    """
+                }
+
+        }
+                }
+            }
+        }
+        
+}

@@ -1,0 +1,93 @@
+pipeline {
+    agent { label 'API-DEV-118' }
+
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['DEV', 'QC', 'UAT', 'PROD', 'DR'], description: 'Specify the environment')
+        string(name: 'EPIC_NAME', defaultValue: '', description: 'Must Enter Epic Name')
+        choice(name: 'Branch', choices: ['dev', 'qc', 'uat', 'prod', 'dr', 'master'], description: 'Specify the branch')
+
+        // Ensure the active Choices Parameter Plugin is installed
+        activeChoice(
+            name: 'PackageName',
+            description: 'Select packages to build. Choose "All" to select all packages.',
+            choiceType: 'PT_MULTI_SELECT',
+            script: [
+                $class: 'GroovyScript',
+                script: [script: "return ['zzwebmpoc','zzConnectivityCheck','zzCharan','All','zzHanu']"]
+                ]
+        )
+    }
+
+    environment {
+        GIT_URL = 'https://bitbucket.tawn.com/scm/ei/webmethods-source-code.git'
+        CREDENTIALS_ID = 'Admin_Bitbucket'
+        DEPLOY_HOST = '10.24.2.118'
+        DEPLOY_PORT = '5555'
+        DEPLOY_USER = 'Administrator'
+        DEPLOY_PWD = 'manage'
+
+        // Set the Java home path and update the PATH
+        JAVA_HOME = '/home/apiadmin/jdk-21.0.4'
+        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${params.Branch}"]],
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [[$class: 'CleanBeforeCheckout'], [$class: 'CloneOption', depth: 1, noTags: false, shallow: true]],
+                    submoduleCfg: [],
+                    userRemoteConfigs: [[
+                        url: "${env.GIT_URL}",
+                        credentialsId: "${env.CREDENTIALS_ID}"
+                    ]]
+                ])
+            }
+        }
+
+        stage('Build') {
+            steps {
+                script {
+					sh "rm -rf /sag/CICD/packagesCopy/*"
+                    def packageList = params.PackageName.split(',')
+
+                    // If "All" is selected, copy all packages, otherwise copy the selected ones
+                    if (packageList.contains('All')) {
+                        sh "cp -r /home/apiadmin/jenkins/workspace/IBM_webMethods_API_Build/assets/IS/packages/* /sag/CICD/packagesCopy/"
+                    } else {
+                        packageList.each { packageName ->
+                            sh "cp -r /home/apiadmin/jenkins/workspace/IBM_webMethods_API_Build/assets/IS/packages/${packageName} /sag/CICD/packagesCopy/"
+                        }
+                    }
+
+                    sh 'echo "Building WebMethods project..."'
+                    sh "rm -rf /sag/CICD/ISBuild/*"
+                    sh '/sag/dbp1011/common/AssetBuildEnvironment/bin/build.sh'
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                script {
+                    def updateAutomatorFile = "/sag/WmTawuniyaCICD/deployer/updateAutomator${params.ENVIRONMENT}.xml"
+                    def dateStr = sh(script: "date +%d%m%Y%H%M", returnStdout: true).trim()
+                    def epicname = "${params.EPIC_NAME}-${params.ENVIRONMENT}-${dateStr}"
+
+                    sh "cp /sag/WmTawuniyaCICD/deployer/Deployment_ProjectAutomator_backup.xml /sag/WmTawuniyaCICD/deployer/Deployment_ProjectAutomator.xml"
+
+                    echo "Executing Ant build with: /sag/dbp1011/common/lib/ant/bin/ant -f ${updateAutomatorFile} -Dbuild.output.dir=/sag/CICD/ISBuild -Depic.name.env.date=${epicname}"
+                    sh "/sag/dbp1011/common/lib/ant/bin/ant -f ${updateAutomatorFile} -Dbuild.output.dir=/sag/CICD/ISBuild -Depic.name.env.date=${epicname}"
+
+                    sh "/sag/dbp1011/IntegrationServer/instances/default/packages/WmDeployer/bin/projectautomatorUnix.sh /sag/WmTawuniyaCICD/deployer/Deployment_ProjectAutomator.xml"
+                    sh "/sag/dbp1011/IntegrationServer/instances/default/packages/WmDeployer/bin/Deployer.sh --deploy -dc Deployment_Candidate -project ${epicname} -host ${env.DEPLOY_HOST} -port ${env.DEPLOY_PORT} -user ${env.DEPLOY_USER} -pwd ${env.DEPLOY_PWD}"
+                }
+            }
+        }
+
+        
+    }
+}

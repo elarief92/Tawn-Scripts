@@ -249,6 +249,31 @@ cp -R "${env.WORKSPACE}/Packages/${pkg}/." "${env.TEMP_SRC}/packages/${pkg}/"
             }
         }
 
+        stage('ABE Build') {
+            steps {
+                sh """
+echo "Building copied packages using ABE..."
+echo "Input source : ${env.TEMP_SRC}"
+echo "Packages dir : ${env.TEMP_SRC}/packages"
+echo "Build output : ${env.BUILD_OUTPUT_DIR}"
+
+if [ ! -d "${env.TEMP_SRC}/packages" ]; then
+  echo "ERROR: packages directory not found: ${env.TEMP_SRC}/packages"
+  exit 1
+fi
+
+cd "${env.TEMP_SRC}"
+
+"${env.SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" \\
+  -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" \\
+  -Dbuild.source.dir="${env.TEMP_SRC}" \\
+  -Denable.checkout=false \\
+  -Denable.archive=false \\
+  -Denable.build.IS=true
+"""
+            }
+        }
+
         stage('Generate Project Automator XML') {
             steps {
                 script {
@@ -279,33 +304,7 @@ cp -R "${env.WORKSPACE}/Packages/${pkg}/." "${env.TEMP_SRC}/packages/${pkg}/"
             }
         }
 
-        /*
-        stage('ABE Build') {
-            steps {
-                sh """
-"${env.SAG_HOME}/common/lib/ant/bin/ant" -f "${env.ABE_BUILD_FILE}" build \\
-  -Dsag.install.dir="${env.SAG_HOME}" \\
-  -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" \\
-  -Dbuild.source.dir="${env.TEMP_SRC}" \\
-  -Denable.checkout=false \\
-  -Denable.archive=false \\
-  -Denable.build.IS=true \\
-  -Denable.build.MWS=false \\
-  -Denable.build.BPM=false \\
-  -Denable.build.TN=false \\
-  -Denable.build.Optimize=false \\
-  -Denable.build.Broker=false \\
-  -Denable.build.EDA=false \\
-  -Denable.build.RULES=false \\
-  -Denable.build.UniversalMessaging=false \\
-  -Dbuild.log.enable=true \\
-  -Dbuild.log.fileName="${env.BUILD_LOG_FILE}" \\
-  -Dbuild.logLevel=INFO \\
-  -Dbuild.exit.error=true
-"""
-            }
-        }
-
+/*
         stage('Create Deployer Project') {
             steps {
                 withCredentials([
@@ -348,7 +347,7 @@ export IS_PWD="${IS_PWD}"
                 }
             }
         }
-        */
+*/
 
         stage('Test Updated Packages') {
             steps {
@@ -364,7 +363,7 @@ export IS_PWD="${IS_PWD}"
 
         stage('Archive Artifacts') {
             steps {
-                archiveArtifacts artifacts: 'epic.txt, generated/*.xml', allowEmptyArchive: true
+                archiveArtifacts artifacts: 'epic.txt, generated/*.xml, generated/*.log, build_output/**', allowEmptyArchive: true
             }
         }
     }
