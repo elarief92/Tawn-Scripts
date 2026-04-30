@@ -80,7 +80,7 @@ pipeline {
 
         ABE_BUILD_FILE        = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
         DEPLOYER_BIN          = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
-        PROJECT_AUTOMATOR     = "${DEPLOYER_BIN}/projectautomator.sh"
+        PROJECT_AUTOMATOR = "${DEPLOYER_BIN}/projectautomatorUnix.sh"
         DEPLOYER_CMD          = "${DEPLOYER_BIN}/Deployer.sh"
 
         TEMP_SRC              = "${WORKSPACE}/.tmp_build_src"
@@ -91,7 +91,7 @@ pipeline {
 
         TEMPLATE_XML          = 'deployer/templates/ProjectAutomator.Repository.template.xml'
 
-        DEPLOYER_HOST         = 'localhost'
+        DEPLOYER_HOST         = '127.0.0.1'
         DEPLOYER_PORT         = '5555'
         REPO_ALIAS            = 'BuildRepo'
 
@@ -250,8 +250,8 @@ cp -R "${env.WORKSPACE}/Packages/${pkg}/." "${env.TEMP_SRC}/packages/${pkg}/"
         }
 
         stage('ABE Build') {
-            steps {
-                sh """
+    steps {
+        sh """
 echo "Building copied packages using ABE..."
 echo "Input source : ${env.TEMP_SRC}"
 echo "Packages dir : ${env.TEMP_SRC}/packages"
@@ -262,6 +262,14 @@ if [ ! -d "${env.TEMP_SRC}/packages" ]; then
   exit 1
 fi
 
+export ANT_OPTS="-Xms1024m -Xmx12288m"
+export JAVA_OPTS="-Xms1024m -Xmx12288m"
+export _JAVA_OPTIONS="-Xmx12288m"
+
+echo "ANT_OPTS      : \$ANT_OPTS"
+echo "JAVA_OPTS     : \$JAVA_OPTS"
+echo "_JAVA_OPTIONS : \$_JAVA_OPTIONS"
+
 cd "${env.TEMP_SRC}"
 
 "${env.SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" \\
@@ -271,8 +279,8 @@ cd "${env.TEMP_SRC}"
   -Denable.archive=false \\
   -Denable.build.IS=true
 """
-            }
-        }
+    }
+}
 
         stage('Generate Project Automator XML') {
             steps {
@@ -283,6 +291,7 @@ cd "${env.TEMP_SRC}"
                     def xml = readFile(file: env.TEMPLATE_XML, encoding: 'UTF-8')
 
                     xml = xml.replace('@DEPLOYER_HOST_PORT@', "${env.DEPLOYER_HOST}:${env.DEPLOYER_PORT}")
+                    
                     xml = xml.replace('@PROJECT_NAME@', names.PROJECT_NAME)
                     xml = xml.replace('@PROJECT_DESC@', names.PROJECT_DESC)
                     xml = xml.replace('@DEPLOYMENT_SET_NAME@', names.DEPLOYMENT_SET_NAME)
@@ -303,51 +312,35 @@ cd "${env.TEMP_SRC}"
                 }
             }
         }
-
-/*
+        
         stage('Create Deployer Project') {
-            steps {
-                withCredentials([
-                    string(credentialsId: 'deployer-creds', variable: 'DEP_PWD'),
-                    string(credentialsId: 'IS-creds', variable: 'IS_PWD')
-                ]) {
-                    sh """
-export DEP_PWD="${DEP_PWD}"
-export IS_PWD="${IS_PWD}"
+    steps {
+        script {
+            if (!fileExists(env.GENERATED_XML)) {
+                error("Generated Project Automator XML not found: ${env.GENERATED_XML}")
+            }
+
+            if (!fileExists(env.PROJECT_AUTOMATOR)) {
+                error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}")
+            }
+        }
+
+        sh """
+echo "Creating Deployer Project from XML..."
+echo "Generated XML     : ${env.GENERATED_XML}"
+echo "Project Automator : ${env.PROJECT_AUTOMATOR}"
+
+chmod +x "${env.PROJECT_AUTOMATOR}" || true
+
+export DEP_PWD="manage"
+export IS_PWD="manage"
 
 "${env.PROJECT_AUTOMATOR}" "${env.GENERATED_XML}"
 """
-                }
-            }
-        }
+    }
+}
 
-        stage('Deploy Candidate') {
-            steps {
-                script {
-                    def names = buildNames(params.EPIC_NAME, params.ENVIRONMENT)
 
-                    withCredentials([
-                        string(credentialsId: 'deployer-creds', variable: 'DEP_PWD'),
-                        string(credentialsId: 'IS-creds', variable: 'IS_PWD')
-                    ]) {
-                        sh """
-export DEP_PWD="${DEP_PWD}"
-export IS_PWD="${IS_PWD}"
-
-"${env.DEPLOYER_CMD}" --deploy \\
-  -project "${names.PROJECT_NAME}" \\
-  -dc "${names.CANDIDATE_NAME}" \\
-  -host "${env.DEPLOYER_HOST}" \\
-  -port "${env.DEPLOYER_PORT}" \\
-  -user "Administrator" \\
-  -pwd "${DEP_PWD}" \\
-  -force
-"""
-                    }
-                }
-            }
-        }
-*/
 
         stage('Test Updated Packages') {
             steps {
@@ -360,10 +353,19 @@ export IS_PWD="${IS_PWD}"
                 }
             }
         }
+        
+        stage('Zip Build Output') {
+            steps {
+                sh """
+        cd "${env.WORKSPACE}"
+        zip -r build_output.zip build_output
+        """
+            }
+        }
 
         stage('Archive Artifacts') {
             steps {
-                archiveArtifacts artifacts: 'epic.txt, generated/*.xml, generated/*.log, build_output/**', allowEmptyArchive: true
+                archiveArtifacts artifacts: 'epic.txt, generated/*.xml, generated/*.log, build_output.zip', allowEmptyArchive: true
             }
         }
     }
@@ -520,7 +522,7 @@ def buildISAliases(targets) {
                 <host>${target.host}</host>
                 <port>${target.port}</port>
                 <user>Administrator</user>
-                <pwd>\${IS_PWD}</pwd>
+                <pwd>manage</pwd>
                 <useSSL>false</useSSL>
                 <installDeployerResource>false</installDeployerResource>
                 <Test>false</Test>

@@ -39,7 +39,7 @@ pipeline {
               resetCmd: '',
               installCmd: 'npm install --legacy-peer-deps',
               buildCmd: 'npm run build:qc',
-              testCoverageCmd: 'npx vitest run --coverage --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
+              testCoverageCmd: 'npx vitest run --coverage --coverage.reporter=lcov --coverage.reporter=text --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 
             artifacts: [
@@ -52,7 +52,7 @@ pipeline {
               sources: '.',
               inclusions: '**/*',
               tsconfigPaths: 'tsconfig.json',
-              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/.next/**'
+              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/.next/**,**/coverage/**,**/reports/**'
             ]
           )
         }
