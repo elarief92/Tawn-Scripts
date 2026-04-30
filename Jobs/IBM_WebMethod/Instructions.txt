@@ -1,0 +1,21 @@
+✅ 1. List deployment reports (latest status)
+./Deployer.sh --list -candidate deploymentReport -dc EPIC2026 -project EPIC2026 -host 127.0.0.1 -port 5555 -user Administrator -pwd manage
+✅ 2. Show last deployment report details (pick latest ID from above)
+./Deployer.sh --showReport -candidate deploymentReport -dc EPIC2026 -project EPIC2026 -id 1 -host 127.0.0.1 -port 5555 -user Administrator -pwd manage
+✅ 3. Check deployment candidate status
+./Deployer.sh --list -candidate dc -project EPIC2026 -host 127.0.0.1 -port 5555 -user Administrator -pwd manage
+✅ 4. Check project info
+./Deployer.sh --list -candidate project -host 127.0.0.1 -port 5555 -user Administrator -pwd manage | grep EPIC2026
+✅ 5. Check build artifacts (what was deployed)
+./Deployer.sh --list -candidate build -project EPIC2026 -host 127.0.0.1 -port 5555 -user Administrator -pwd manage
+🔥 Quick shortcut (most useful)
+./Deployer.sh --list -candidate deploymentReport -dc EPIC2026 -project EPIC2026 -host 127.0.0.1 -port 5555 -user Administrator -pwd manage | tail -15
+🎯 What you look for
+Has Deployment Candidate been deployed ?: true
+Has Deployment Candidate been checkpointed ?: true
+
+and latest report:
+
+Deployment
+Checkpoint
+Rollback (if happened)

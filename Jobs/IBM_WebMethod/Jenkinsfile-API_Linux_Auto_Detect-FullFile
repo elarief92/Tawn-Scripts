@@ -339,24 +339,45 @@ export IS_PWD="manage"
 """
     }
 }
+stage('Create Snapshot') {
+    steps {
+        script {
+            if (!params.EPIC_NAME?.trim()) {
+                error("EPIC_NAME is required before creating snapshot")
+            }
 
+            if (!fileExists(env.DEPLOYER_CMD)) {
+                error("Deployer command not found: ${env.DEPLOYER_CMD}")
+            }
+        }
+
+        sh """
+echo "Creating snapshot/checkpoint before new deployment..."
+echo "Project   : ${params.EPIC_NAME}"
+echo "Candidate : ${params.EPIC_NAME}"
+echo "Host      : ${env.DEPLOYER_HOST}"
+echo "Port      : ${env.DEPLOYER_PORT}"
+
+chmod +x "${env.DEPLOYER_CMD}" || true
+
+"${env.DEPLOYER_CMD}" --checkpoint \\
+  -dc "${params.EPIC_NAME}" \\
+  -project "${params.EPIC_NAME}" \\
+  -host "${env.DEPLOYER_HOST}" \\
+  -port "${env.DEPLOYER_PORT}" \\
+  -user "Administrator" \\
+  -pwd "manage"
+"""
+    }
+}
 stage('Deploy Candidate') {
     steps {
         script {
             def names = buildNames(params.EPIC_NAME, params.ENVIRONMENT)
 
-            if (!fileExists(env.DEPLOYER_CMD)) {
-                error("Deployer command not found: ${env.DEPLOYER_CMD}")
-            }
-
-            sh """
+            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                sh """
 echo "Deploying Candidate..."
-echo "Project   : ${names.PROJECT_NAME}"
-echo "Candidate : ${names.CANDIDATE_NAME}"
-echo "Host      : ${env.DEPLOYER_HOST}"
-echo "Port      : ${env.DEPLOYER_PORT}"
-
-chmod +x "${env.DEPLOYER_CMD}" || true
 
 "${env.DEPLOYER_CMD}" --deploy \\
   -project "${names.PROJECT_NAME}" \\
@@ -367,9 +388,47 @@ chmod +x "${env.DEPLOYER_CMD}" || true
   -pwd "manage" \\
   -force
 """
+ // 🔥 TEST FAILURE HERE
+    //  error("TEST FAILURE after successful deploy - rollback should run")
+            }
+
+            // check stage result
+            if (currentBuild.currentResult == 'FAILURE') {
+                DEPLOY_STATUS = "FAILED"
+                echo "Deployment failed"
+            } else {
+                DEPLOY_STATUS = "SUCCESS"
+                echo "Deployment succeeded"
+            }
         }
     }
 }
+
+
+stage('Rollback (if needed)') {
+    when {
+        expression { DEPLOY_STATUS == "FAILED" }
+    }
+    steps {
+        script {
+            def names = buildNames(params.EPIC_NAME, params.ENVIRONMENT)
+
+            echo "Rolling back to last checkpoint..."
+
+            sh """
+"${env.DEPLOYER_CMD}" --rollback \\
+  -project "${names.PROJECT_NAME}" \\
+  -dc "${names.CANDIDATE_NAME}" \\
+  -host "${env.DEPLOYER_HOST}" \\
+  -port "${env.DEPLOYER_PORT}" \\
+  -user "Administrator" \\
+  -pwd "manage"
+"""
+        }
+    }
+}
+
+
 
         stage('Test Updated Packages') {
             steps {
