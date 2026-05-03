@@ -212,12 +212,15 @@ cd "${env.TEMP_SRC}"
                     if (!fileExists(env.PROJECT_AUTOMATOR)) { error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}") }
                 }
 
-                withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
+                withCredentials([
+                    usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD'),
+                    usernamePassword(credentialsId: 'apiadmin-target-preprod', usernameVariable: 'IS_USER', passwordVariable: 'IS_PWD')
+                ]) {
                     sh '''
 sed -i "s|\\${DEPLOY_USER}|${DEPLOY_USER}|g" "${GENERATED_XML}"
 sed -i "s|\\${DEP_PWD}|${DEPLOY_PWD}|g" "${GENERATED_XML}"
-sed -i "s|\\${IS_USER}|${DEPLOY_USER}|g" "${GENERATED_XML}"
-sed -i "s|\\${IS_PWD}|${DEPLOY_PWD}|g" "${GENERATED_XML}"
+sed -i "s|\\${IS_USER}|${IS_USER}|g" "${GENERATED_XML}"
+sed -i "s|\\${IS_PWD}|${IS_PWD}|g" "${GENERATED_XML}"
 chmod +x "${PROJECT_AUTOMATOR}" || true
 "${PROJECT_AUTOMATOR}" "${GENERATED_XML}"
 '''
@@ -240,8 +243,6 @@ chmod +x "${PROJECT_AUTOMATOR}" || true
         stage('Deploy Candidate') {
             steps {
                 script {
-                    def names = buildNames(params.EPIC_NAME, params.ENVIRONMENT)
-
                     catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
                         withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
                             sh '${DEPLOYER_CMD} --deploy -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}" -force'
@@ -266,12 +267,8 @@ chmod +x "${PROJECT_AUTOMATOR}" || true
                 expression { DEPLOY_STATUS == "FAILED" }
             }
             steps {
-                script {
-                    def names = buildNames(params.EPIC_NAME, params.ENVIRONMENT)
-
-                    withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
-                        sh '${DEPLOYER_CMD} --rollback -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}"'
-                    }
+                withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
+                    sh '${DEPLOYER_CMD} --rollback -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}"'
                 }
             }
         }
