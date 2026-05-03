@@ -23,11 +23,7 @@ properties([
             script: [
                 $class: 'GroovyScript',
                 fallbackScript: [classpath: [], sandbox: true, script: 'return ["DEV_APP01"]'],
-                script: [
-                    classpath: [],
-                    sandbox: true,
-                    script: 'if (ENVIRONMENT == "DEV") { return ["DEV_APP01", "DEV_APP02"] } else if (ENVIRONMENT == "QC") { return ["QC_APP01", "QC_APP04"] } else if (ENVIRONMENT == "PROD") { return ["PRD_APP01", "PRD_APP02"] } else { return ["None"] }'
-                ]
+                script: [classpath: [], sandbox: true, script: 'if (ENVIRONMENT == "DEV") { return ["DEV_APP01", "DEV_APP02"] } else if (ENVIRONMENT == "QC") { return ["QC_APP01", "QC_APP04"] } else if (ENVIRONMENT == "PROD") { return ["PRD_APP01", "PRD_APP02"] } else { return ["None"] }']
             ]
         ]
     ])
@@ -71,9 +67,7 @@ pipeline {
                 script {
                     if (!params.EPIC_NAME?.trim()) { error("EPIC_NAME is required") }
                     if (!params.ENVIRONMENT?.trim()) { error("ENVIRONMENT is required") }
-
-                    def selectedTargets = getSelected(params.TARGET_SCOPE)
-                    if (selectedTargets.isEmpty()) { error("Select at least one target server") }
+                    if (getSelected(params.TARGET_SCOPE).isEmpty()) { error("Select at least one target server") }
                 }
             }
         }
@@ -119,12 +113,11 @@ pipeline {
                     def diffOutput = sh(returnStdout: true, script: 'git diff-tree --no-commit-id --name-only -r HEAD').trim()
                     echo "Changed files raw output:\n${diffOutput}"
 
-                    def changedFiles = diffOutput ? diffOutput.readLines() : []
                     def packageSet = [] as Set
+                    def changedFiles = diffOutput ? diffOutput.readLines() : []
 
                     changedFiles.each { file ->
-                        def normalized = file.replace('\\', '/')
-                        def matcher = normalized =~ /(?i)^Packages\/([^\/]+)\//
+                        def matcher = file.replace('\\', '/') =~ /(?i)^Packages\/([^\/]+)\//
                         if (matcher.find()) { packageSet << matcher.group(1) }
                     }
 
@@ -219,7 +212,16 @@ cd "${env.TEMP_SRC}"
                     if (!fileExists(env.PROJECT_AUTOMATOR)) { error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}") }
                 }
 
-                sh 'chmod +x "${PROJECT_AUTOMATOR}" || true; export DEP_PWD="manage"; export IS_PWD="manage"; "${PROJECT_AUTOMATOR}" "${GENERATED_XML}"'
+                withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
+                    sh '''
+sed -i "s|\\${DEPLOY_USER}|${DEPLOY_USER}|g" "${GENERATED_XML}"
+sed -i "s|\\${DEP_PWD}|${DEPLOY_PWD}|g" "${GENERATED_XML}"
+sed -i "s|\\${IS_USER}|${DEPLOY_USER}|g" "${GENERATED_XML}"
+sed -i "s|\\${IS_PWD}|${DEPLOY_PWD}|g" "${GENERATED_XML}"
+chmod +x "${PROJECT_AUTOMATOR}" || true
+"${PROJECT_AUTOMATOR}" "${GENERATED_XML}"
+'''
+                }
             }
         }
 
@@ -229,7 +231,9 @@ cd "${env.TEMP_SRC}"
                     if (!fileExists(env.DEPLOYER_CMD)) { error("Deployer command not found: ${env.DEPLOYER_CMD}") }
                 }
 
-                sh 'chmod +x "${DEPLOYER_CMD}" || true; "${DEPLOYER_CMD}" --checkpoint -dc "${EPIC_NAME}" -project "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "Administrator" -pwd "manage"'
+                withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
+                    sh 'chmod +x "${DEPLOYER_CMD}" || true; "${DEPLOYER_CMD}" --checkpoint -dc "${EPIC_NAME}" -project "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}"'
+                }
             }
         }
 
@@ -239,7 +243,9 @@ cd "${env.TEMP_SRC}"
                     def names = buildNames(params.EPIC_NAME, params.ENVIRONMENT)
 
                     catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                        sh "\"${env.DEPLOYER_CMD}\" --deploy -project \"${names.PROJECT_NAME}\" -dc \"${names.CANDIDATE_NAME}\" -host \"${env.DEPLOYER_HOST}\" -port \"${env.DEPLOYER_PORT}\" -user \"Administrator\" -pwd \"manage\" -force"
+                        withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
+                            sh '${DEPLOYER_CMD} --deploy -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}" -force'
+                        }
 
                         // error("TEST FAILURE after successful deploy - rollback should run")
                     }
@@ -262,7 +268,10 @@ cd "${env.TEMP_SRC}"
             steps {
                 script {
                     def names = buildNames(params.EPIC_NAME, params.ENVIRONMENT)
-                    sh "\"${env.DEPLOYER_CMD}\" --rollback -project \"${names.PROJECT_NAME}\" -dc \"${names.CANDIDATE_NAME}\" -host \"${env.DEPLOYER_HOST}\" -port \"${env.DEPLOYER_PORT}\" -user \"Administrator\" -pwd \"manage\""
+
+                    withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
+                        sh '${DEPLOYER_CMD} --rollback -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}"'
+                    }
                 }
             }
         }
@@ -353,8 +362,8 @@ def buildISAliases(targets) {
         """            <isalias name="${target.alias}">
                 <host>${target.host}</host>
                 <port>${target.port}</port>
-                <user>Administrator</user>
-                <pwd>manage</pwd>
+                <user>\${IS_USER}</user>
+                <pwd>\${IS_PWD}</pwd>
                 <useSSL>false</useSSL>
                 <installDeployerResource>false</installDeployerResource>
                 <Test>false</Test>
