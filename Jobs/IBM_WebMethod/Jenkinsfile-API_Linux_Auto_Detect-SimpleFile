@@ -74,12 +74,6 @@ pipeline {
 
                     def selectedTargets = getSelected(params.TARGET_SCOPE)
                     if (selectedTargets.isEmpty()) { error("Select at least one target server") }
-
-                    echo "NODE_NAME: ${env.NODE_NAME}"
-                    echo "WORKSPACE: ${env.WORKSPACE}"
-                    echo "ENVIRONMENT: ${params.ENVIRONMENT}"
-                    echo "EPIC_NAME: ${params.EPIC_NAME}"
-                    echo "TARGET_SCOPE: ${selectedTargets.join(', ')}"
                 }
             }
         }
@@ -339,14 +333,14 @@ def getSelected(val) {
 }
 
 def buildNames(epic, environmentName) {
-    def safeEpic = epic.trim()
+    def epicname = epic.trim()
 
     return [
-        PROJECT_NAME        : safeEpic,
-        PROJECT_DESC        : "Project created for EPIC ${safeEpic} on ${environmentName} environment",
-        DEPLOYMENT_SET_NAME : "${safeEpic}_DEPLOYMENT_SET",
-        DEPLOYMENT_MAP_NAME : "${safeEpic}_DEPLOYMENT_MAP",
-        CANDIDATE_NAME      : safeEpic
+        PROJECT_NAME        : epicname,
+        PROJECT_DESC        : "Project created for EPIC ${epicname} on ${environmentName} environment",
+        DEPLOYMENT_SET_NAME : "${epicname}_DEPLOYMENT_SET",
+        DEPLOYMENT_MAP_NAME : "${epicname}_DEPLOYMENT_MAP",
+        CANDIDATE_NAME      : epicname
     ]
 }
 
