@@ -8,7 +8,7 @@ pipeline {
   }
 
   environment {
-    BRANCH_NAME = 'PROD'
+    BRANCH_NAME = 'DEV'
   }
 
   stages {
@@ -35,13 +35,16 @@ pipeline {
               serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
             ],
 
-            mvnCmd: "mvn -Dmaven.compiler.fork=true -Dmaven.compiler.executable=\"C:\\\\Program Files\\\\Java\\\\jdk-21\\\\bin\\\\javac.exe\" clean package -Denvironment=${envLower} -DapplicationName=${appName} -DlogDirectory=\"/u01/Logs\" -DartifactVersion=${env.ARTIFACT_VERSION}",
+            mvnCmd: "mvn clean verify -Denvironment=${envLower} -DapplicationName=${appName} -DlogDirectory=\"/u01/Logs\"",
 
             sonar: [
               server: 'SonarQube',
               projectKey: 'BFF-WEB-WORKSHOPPORTAL',
               sources: 'src/main/java',
-              binaries: 'target/classes'
+              tests: 'src/test/java',
+              binaries: 'target/classes',
+              junitReports: 'target/surefire-reports',
+              coverageReport: 'target/site/jacoco/jacoco.xml'
             ]
           ])
         }

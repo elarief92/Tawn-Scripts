@@ -8,7 +8,7 @@ pipeline {
   }
 
   environment {
-    BRANCH_NAME = 'PROD'
+    BRANCH_NAME = 'DEV'
   }
 
   stages {

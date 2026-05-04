@@ -6,7 +6,7 @@ pipeline {
   }
 
   environment {
-    BRANCH_NAME = 'PROD'
+    BRANCH_NAME = 'DEV'
     REPO_NAME   = 'DH-Landing-V2'
     PROJECT_KEY = 'DXP-FE-Landing-V2'
   }
