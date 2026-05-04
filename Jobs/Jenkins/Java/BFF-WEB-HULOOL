@@ -35,7 +35,7 @@ pipeline {
               serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
             ],
 
-            mvnCmd: "mvn -Dmaven.compiler.fork=true -Dmaven.compiler.executable=\"C:\\\\Program Files\\\\Java\\\\jdk-21\\\\bin\\\\javac.exe\" clean package -Denvironment=${envLower} -DapplicationName=${appName} -DlogDirectory=\"/u01/Logs/hulool-api\" -DartifactVersion=${env.ARTIFACT_VERSION}",
+            mvnCmd: "mvn clean package -Denvironment=${envLower} -DapplicationName=${appName} -DlogDirectory=\"/u01/Logs/hulool-api\" ",
 
             sonar: [
               server: 'SonarQube',

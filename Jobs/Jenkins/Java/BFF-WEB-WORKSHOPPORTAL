@@ -35,7 +35,7 @@ pipeline {
               serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
             ],
 
-            mvnCmd: "mvn clean verify -Denvironment=${envLower} -DapplicationName=${appName} -DlogDirectory=\"/u01/Logs\"",
+            mvnCmd: "mvn clean verify -Denvironment=${envLower} -DapplicationName=${appName} -DlogDirectory=\"/u01/Logs\" ",
 
             sonar: [
               server: 'SonarQube',

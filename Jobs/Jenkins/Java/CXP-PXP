@@ -36,10 +36,10 @@ pipeline {
             ],
 
             preBuildCmd: """
-set NODE_OPTIONS=--max-old-space-size=8192
-""",
+                set NODE_OPTIONS=--max-old-space-size=8192
+                """,
 
-            mvnCmd: "mvn clean install -Denvironment=${envLower} -DapplicationName=${appName} -DartifactVersion=${env.ARTIFACT_VERSION}",
+            mvnCmd: "mvn clean install -Denvironment=${envLower} -DapplicationName=${appName} ",
 
             sonar: [
               server: 'SonarQube',

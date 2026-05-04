@@ -34,12 +34,12 @@ pipeline {
             ],
 
             preBuildCmd: """
-robocopy "E:\\Jenkins\\Home\\workspace\\Digital Experience Platforms\\Configuration\\${branchName}\\bff-web-survey" "E:\\Jenkins\\Home\\workspace\\sonarqube\\tawn\\BFF-WEB-SURVEY" /E /J /COPY:DATS /MT:1 /IS /IT /IM /X /V /NP /NODCOPY /XD .*
-if %ERRORLEVEL% LEQ 7 exit /b 0
-exit /b %ERRORLEVEL%
-""",
+                  robocopy "E:\\Jenkins\\Home\\workspace\\Digital Experience Platforms\\Configuration\\${branchName}\\bff-web-survey" "E:\\Jenkins\\Home\\workspace\\sonarqube\\tawn\\BFF-WEB-SURVEY" /E /J /COPY:DATS /MT:1 /IS /IT /IM /X /V /NP /NODCOPY /XD .*
+                  if %ERRORLEVEL% LEQ 7 exit /b 0
+                  exit /b %ERRORLEVEL%
+                  """,
 
-            mvnCmd: "mvn clean package -DartifactVersion=${env.ARTIFACT_VERSION}",
+            mvnCmd: "mvn clean package ",
 
             sonar: [
               server: 'SonarQube',
