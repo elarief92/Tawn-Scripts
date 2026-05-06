@@ -25,6 +25,28 @@ properties([
                 fallbackScript: [classpath: [], sandbox: true, script: 'return ["DEV_APP01"]'],
                 script: [classpath: [], sandbox: true, script: 'if (ENVIRONMENT == "DEV") { return ["DEV_APP01", "DEV_APP02"] } else if (ENVIRONMENT == "QC") { return ["QC_APP01", "QC_APP04"] } else if (ENVIRONMENT == "PROD") { return ["PRD_APP01", "PRD_APP02"] } else { return ["None"] }']
             ]
+        ],
+        [
+            $class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            name: 'PACKAGES_TO_BUILD',
+            description: 'Select packages to build and deploy',
+            filterable: true,
+            filterLength: 2,
+            script: [
+                $class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: true, script: 'return ["TawncheckoutPayment"]'],
+                script: [classpath: [], sandbox: true, script: '''
+return [
+    "TawncheckoutPayment",
+    "TawnMedDomesticWorker",
+    "TawnMobileApplication",
+    "TawnMotorNonRetail",
+    "TawnSMEMedicalProcess",
+    "TawnSMESalesCRM"
+]
+''']
+            ]
         ]
     ])
 ])
@@ -68,6 +90,15 @@ pipeline {
                     if (!params.EPIC_NAME?.trim()) { error("EPIC_NAME is required") }
                     if (!params.ENVIRONMENT?.trim()) { error("ENVIRONMENT is required") }
                     if (getSelected(params.TARGET_SCOPE).isEmpty()) { error("Select at least one target server") }
+
+                    CHANGED_PACKAGES = getSelected(params.PACKAGES_TO_BUILD)
+
+                    if (CHANGED_PACKAGES.isEmpty()) {
+                        error("Select at least one package")
+                    }
+
+                    echo "Selected packages: ${CHANGED_PACKAGES.join(', ')}"
+                    echo "Selected targets: ${getSelected(params.TARGET_SCOPE).join(', ')}"
                 }
             }
         }
@@ -103,30 +134,6 @@ pipeline {
                         repositoryName: 'sag',
                         serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
                     )
-                }
-            }
-        }
-
-        stage('Detect Changed Packages') {
-            steps {
-                script {
-                    def diffOutput = sh(returnStdout: true, script: 'git diff-tree --no-commit-id --name-only -r HEAD').trim()
-                    echo "Changed files raw output:\n${diffOutput}"
-
-                    def packageSet = [] as Set
-                    def changedFiles = diffOutput ? diffOutput.readLines() : []
-
-                    changedFiles.each { file ->
-                        def matcher = file.replace('\\', '/') =~ /(?i)^Packages\/([^\/]+)\//
-                        if (matcher.find()) { packageSet << matcher.group(1) }
-                    }
-
-                    CHANGED_PACKAGES = packageSet.toList().sort()
-                    echo "Detected packages: ${CHANGED_PACKAGES.join(', ')}"
-
-                    if (CHANGED_PACKAGES.isEmpty()) {
-                        error("No package changes detected under Packages/. Job failed.")
-                    }
                 }
             }
         }
@@ -217,13 +224,13 @@ cd "${env.TEMP_SRC}"
                     usernamePassword(credentialsId: 'apiadmin-target-preprod', usernameVariable: 'IS_USER', passwordVariable: 'IS_PWD')
                 ]) {
                     sh '''
-sed -i "s|\\${DEPLOY_USER}|${DEPLOY_USER}|g" "${GENERATED_XML}"
-sed -i "s|\\${DEP_PWD}|${DEPLOY_PWD}|g" "${GENERATED_XML}"
-sed -i "s|\\${IS_USER}|${IS_USER}|g" "${GENERATED_XML}"
-sed -i "s|\\${IS_PWD}|${IS_PWD}|g" "${GENERATED_XML}"
-chmod +x "${PROJECT_AUTOMATOR}" || true
-"${PROJECT_AUTOMATOR}" "${GENERATED_XML}"
-'''
+                        sed -i "s|\\${DEPLOY_USER}|${DEPLOY_USER}|g" "${GENERATED_XML}"
+                        sed -i "s|\\${DEP_PWD}|${DEPLOY_PWD}|g" "${GENERATED_XML}"
+                        sed -i "s|\\${IS_USER}|${IS_USER}|g" "${GENERATED_XML}"
+                        sed -i "s|\\${IS_PWD}|${IS_PWD}|g" "${GENERATED_XML}"
+                        chmod +x "${PROJECT_AUTOMATOR}" || true
+                        "${PROJECT_AUTOMATOR}" "${GENERATED_XML}"
+                        '''
                 }
             }
         }
@@ -247,8 +254,6 @@ chmod +x "${PROJECT_AUTOMATOR}" || true
                         withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
                             sh '${DEPLOYER_CMD} --deploy -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}" -force'
                         }
-
-                        // error("TEST FAILURE after successful deploy - rollback should run")
                     }
 
                     if (currentBuild.currentResult == 'FAILURE') {
@@ -280,20 +285,28 @@ chmod +x "${PROJECT_AUTOMATOR}" || true
         }
 
         stage('Archive Artifacts') {
-            steps {  archiveArtifacts artifacts: 'generated/*.xml, generated/*.log, build_output.zip', allowEmptyArchive: true  }
+            steps {
+                archiveArtifacts artifacts: 'generated/*.xml, generated/*.log, build_output.zip', allowEmptyArchive: true
+            }
         }
     }
 
     post {
         success {
-            script {  sendDeploymentEmail('Success', '#27ae60', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:")  }
+            script {
+                sendDeploymentEmail('Success', '#27ae60', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:")
+            }
         }
 
         failure {
-            script {  sendDeploymentEmail('Failed', '#c0392b', "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:")  }
+            script {
+                sendDeploymentEmail('Failed', '#c0392b', "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:")
+            }
         }
 
-        always {  echo "Pipeline execution finished."  }
+        always {
+            echo "Pipeline execution finished."
+        }
     }
 }
 
@@ -315,6 +328,7 @@ body{font-family:Arial,sans-serif;background:#f4f4f4;color:#333}
 <p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
 <p><strong>Environment:</strong> ${params.ENVIRONMENT}</p>
 <p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
+<p><strong>Packages:</strong> ${getSelected(params.PACKAGES_TO_BUILD).join(', ')}</p>
 <p><strong>Status:</strong> ${status}</p>
 <p><strong>Deployment Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
 <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
