@@ -178,7 +178,7 @@ export ANT_OPTS="-Xms1024m -Xmx12288m"
 export JAVA_OPTS="-Xms1024m -Xmx12288m"
 export _JAVA_OPTIONS="-Xmx12288m"
 cd "${env.TEMP_SRC}"
-"${env.SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" -Dbuild.source.dir="${env.TEMP_SRC}" -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true
+"${env.SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" -Dbuild.source.dir="${env.TEMP_SRC}" -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true  | tee "${env.BUILD_LOG_FILE}"
 """
             }
         }
