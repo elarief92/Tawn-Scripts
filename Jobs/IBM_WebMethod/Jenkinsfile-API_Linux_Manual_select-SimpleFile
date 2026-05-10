@@ -22,8 +22,8 @@ properties([
             filterLength: 2,
             script: [
                 $class: 'GroovyScript',
-                fallbackScript: [classpath: [], sandbox: true, script: 'return ["DEV_APP01"]'],
-                script: [classpath: [], sandbox: true, script: 'if (ENVIRONMENT == "DEV") { return ["DEV_APP01", "DEV_APP02"] } else if (ENVIRONMENT == "QC") { return ["QC_APP01", "QC_APP04"] } else if (ENVIRONMENT == "PROD") { return ["PRD_APP01", "PRD_APP02"] } else { return ["None"] }']
+                fallbackScript: [classpath: [], sandbox: true, script: 'return ["PREPROD_APP01"]'],
+                script: [classpath: [], sandbox: true, script: 'if (ENVIRONMENT == "DEV") { return ["PREPROD_APP01", "DEV_APP02"] } else if (ENVIRONMENT == "QC") { return ["QC_APP01", "QC_APP04"] } else if (ENVIRONMENT == "PROD") { return ["PRD_APP01", "PRD_APP02"] } else { return ["None"] }']
             ]
         ],
         [
@@ -55,7 +55,7 @@ def CHANGED_PACKAGES = []
 def DEPLOY_STATUS = "SUCCESS"
 
 pipeline {
-    agent { label 'API-DEV-118' }
+    agent { label 'SAG-PREP-IPP02' }
 
     options {
         disableConcurrentBuilds()
@@ -64,7 +64,8 @@ pipeline {
     }
 
     environment {
-        SAG_HOME = '/sag/dbp1011'
+        SAG_HOME = '/sag/be1015'
+        JAVA_HOME = '/sag/be1015/jvm/jvm'
         ABE_BUILD_FILE = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
         DEPLOYER_BIN = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
         PROJECT_AUTOMATOR = "${DEPLOYER_BIN}/projectautomatorUnix.sh"
@@ -87,9 +88,17 @@ pipeline {
         stage('Validate Input') {
             steps {
                 script {
-                    if (!params.EPIC_NAME?.trim()) { error("EPIC_NAME is required") }
-                    if (!params.ENVIRONMENT?.trim()) { error("ENVIRONMENT is required") }
-                    if (getSelected(params.TARGET_SCOPE).isEmpty()) { error("Select at least one target server") }
+                    if (!params.EPIC_NAME?.trim()) {
+                        error("EPIC_NAME is required")
+                    }
+
+                    if (!params.ENVIRONMENT?.trim()) {
+                        error("ENVIRONMENT is required")
+                    }
+
+                    if (getSelected(params.TARGET_SCOPE).isEmpty()) {
+                        error("Select at least one target server")
+                    }
 
                     CHANGED_PACKAGES = getSelected(params.PACKAGES_TO_BUILD)
 
@@ -115,7 +124,11 @@ pipeline {
         stage('Send Start Email') {
             steps {
                 script {
-                    sendDeploymentEmail('Started', '#f39c12', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been started as follows:")
+                    sendDeploymentEmail(
+                        'Started',
+                        '#f39c12',
+                        "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been started as follows:"
+                    )
                 }
             }
         }
@@ -124,6 +137,7 @@ pipeline {
             steps {
                 script {
                     def branchName = getEnvironmentConfig(params.ENVIRONMENT).branch
+
                     deleteDir()
 
                     bbs_checkout(
@@ -156,15 +170,22 @@ pipeline {
 
         stage('Prepare Build Source') {
             steps {
-                sh 'rm -rf "${TEMP_SRC}" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}" && mkdir -p "${TEMP_SRC}/packages" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}"'
+                sh '''
+                    rm -rf "${TEMP_SRC}" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}"
+                    mkdir -p "${TEMP_SRC}" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}"
+                '''
 
                 script {
                     for (pkg in CHANGED_PACKAGES) {
                         sh """
-if [ ! -d "${env.WORKSPACE}/Packages/${pkg}" ]; then echo "Missing package: ${pkg}"; exit 1; fi
-mkdir -p "${env.TEMP_SRC}/packages/${pkg}"
-cp -R "${env.WORKSPACE}/Packages/${pkg}/." "${env.TEMP_SRC}/packages/${pkg}/"
-"""
+                            if [ ! -d "${env.WORKSPACE}/Packages/${pkg}" ]; then
+                                echo "Missing package: ${pkg}"
+                                exit 1
+                            fi
+
+                            mkdir -p "${env.TEMP_SRC}/${pkg}"
+                            cp -R "${env.WORKSPACE}/Packages/${pkg}/." "${env.TEMP_SRC}/${pkg}/"
+                        """
                     }
                 }
             }
@@ -172,14 +193,42 @@ cp -R "${env.WORKSPACE}/Packages/${pkg}/." "${env.TEMP_SRC}/packages/${pkg}/"
 
         stage('ABE Build') {
             steps {
-                sh """
-if [ ! -d "${env.TEMP_SRC}/packages" ]; then echo "ERROR: packages directory not found: ${env.TEMP_SRC}/packages"; exit 1; fi
-export ANT_OPTS="-Xms1024m -Xmx12288m"
-export JAVA_OPTS="-Xms1024m -Xmx12288m"
-export _JAVA_OPTIONS="-Xmx12288m"
-cd "${env.TEMP_SRC}"
-"${env.SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" -Dbuild.output.dir="${env.BUILD_OUTPUT_DIR}" -Dbuild.source.dir="${env.TEMP_SRC}" -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true  | tee "${env.BUILD_LOG_FILE}"
-"""
+                sh '''
+                    set -o pipefail
+
+                    export SAG_HOME=/sag/be1015
+                    export JAVA_HOME=/sag/be1015/jvm/jvm
+                    export PATH=$JAVA_HOME/bin:$PATH
+                    unset CLASSPATH
+
+                    export ANT_OPTS="-Xms1024m -Xmx12288m"
+                    export JAVA_OPTS="-Xms1024m -Xmx12288m"
+
+                    cd "${SAG_HOME}/common/AssetBuildEnvironment/master_build"
+
+                    export ANT_ARGS="-Dbuild.output.dir=${BUILD_OUTPUT_DIR} -Dbuild.source.dir=${TEMP_SRC} -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true"
+
+                    "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" | tee "${BUILD_LOG_FILE}"
+                '''
+            }
+        }
+
+        stage('Validate ABE Output') {
+            steps {
+                sh '''
+                    echo "Checking ABE output..."
+                    find "${BUILD_OUTPUT_DIR}" -maxdepth 3 -type f | sort
+
+                    if [ ! -d "${BUILD_OUTPUT_DIR}/IS" ]; then
+                        echo "ERROR: ${BUILD_OUTPUT_DIR}/IS not found"
+                        exit 1
+                    fi
+
+                    if ! ls "${BUILD_OUTPUT_DIR}/IS"/*.acdl >/dev/null 2>&1; then
+                        echo "ERROR: No ACDL files generated"
+                        exit 1
+                    fi
+                '''
             }
         }
 
@@ -205,9 +254,7 @@ cd "${env.TEMP_SRC}"
                     writeFile(file: env.GENERATED_XML, text: xml, encoding: 'UTF-8')
 
                     echo "Generated XML: ${env.GENERATED_XML}"
-                    echo "===== GENERATED XML START ====="
-                    echo readFile(file: env.GENERATED_XML, encoding: 'UTF-8')
-                    echo "===== GENERATED XML END ====="
+                    echo "XML generated successfully. Content hidden to avoid exposing credentials."
                 }
             }
         }
@@ -215,22 +262,28 @@ cd "${env.TEMP_SRC}"
         stage('Create Deployer Project') {
             steps {
                 script {
-                    if (!fileExists(env.GENERATED_XML)) { error("Generated Project Automator XML not found: ${env.GENERATED_XML}") }
-                    if (!fileExists(env.PROJECT_AUTOMATOR)) { error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}") }
+                    if (!fileExists(env.GENERATED_XML)) {
+                        error("Generated Project Automator XML not found: ${env.GENERATED_XML}")
+                    }
+
+                    if (!fileExists(env.PROJECT_AUTOMATOR)) {
+                        error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}")
+                    }
                 }
 
                 withCredentials([
-                    usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD'),
-                    usernamePassword(credentialsId: 'apiadmin-target-preprod', usernameVariable: 'IS_USER', passwordVariable: 'IS_PWD')
+                    usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD'),
+                    usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'IS_USER', passwordVariable: 'IS_PWD')
                 ]) {
                     sh '''
-                        sed -i "s|\\${DEPLOY_USER}|${DEPLOY_USER}|g" "${GENERATED_XML}"
-                        sed -i "s|\\${DEP_PWD}|${DEPLOY_PWD}|g" "${GENERATED_XML}"
+                        sed -i "s|\\${DEPLOYER_USER}|${DEPLOYER_USER}|g" "${GENERATED_XML}"
+                        sed -i "s|\\${DEPLOYER_PWD}|${DEPLOYER_PWD}|g" "${GENERATED_XML}"
                         sed -i "s|\\${IS_USER}|${IS_USER}|g" "${GENERATED_XML}"
                         sed -i "s|\\${IS_PWD}|${IS_PWD}|g" "${GENERATED_XML}"
+
                         chmod +x "${PROJECT_AUTOMATOR}" || true
                         "${PROJECT_AUTOMATOR}" "${GENERATED_XML}"
-                        '''
+                    '''
                 }
             }
         }
@@ -238,11 +291,26 @@ cd "${env.TEMP_SRC}"
         stage('Create Snapshot') {
             steps {
                 script {
-                    if (!fileExists(env.DEPLOYER_CMD)) { error("Deployer command not found: ${env.DEPLOYER_CMD}") }
+                    if (!fileExists(env.DEPLOYER_CMD)) {
+                        error("Deployer command not found: ${env.DEPLOYER_CMD}")
+                    }
                 }
 
-                withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
-                    sh 'chmod +x "${DEPLOYER_CMD}" || true; "${DEPLOYER_CMD}" --checkpoint -dc "${EPIC_NAME}" -project "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}"'
+                withCredentials([
+                    usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
+                ]) {
+                    sh '''
+                        chmod +x "${DEPLOYER_CMD}" || true
+
+                        "${DEPLOYER_CMD}" \
+                          --checkpoint \
+                          -dc "${EPIC_NAME}" \
+                          -project "${EPIC_NAME}" \
+                          -host "${DEPLOYER_HOST}" \
+                          -port "${DEPLOYER_PORT}" \
+                          -user "${DEPLOYER_USER}" \
+                          -pwd "${DEPLOYER_PWD}"
+                    '''
                 }
             }
         }
@@ -251,8 +319,20 @@ cd "${env.TEMP_SRC}"
             steps {
                 script {
                     catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                        withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
-                            sh '${DEPLOYER_CMD} --deploy -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}" -force'
+                        withCredentials([
+                            usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
+                        ]) {
+                            sh '''
+                                "${DEPLOYER_CMD}" \
+                                  --deploy \
+                                  -project "${EPIC_NAME}" \
+                                  -dc "${EPIC_NAME}" \
+                                  -host "${DEPLOYER_HOST}" \
+                                  -port "${DEPLOYER_PORT}" \
+                                  -user "${DEPLOYER_USER}" \
+                                  -pwd "${DEPLOYER_PWD}" \
+                                  -force
+                            '''
                         }
                     }
 
@@ -272,15 +352,29 @@ cd "${env.TEMP_SRC}"
                 expression { DEPLOY_STATUS == "FAILED" }
             }
             steps {
-                withCredentials([usernamePassword(credentialsId: 'apiadmin-preprod', usernameVariable: 'DEPLOY_USER', passwordVariable: 'DEPLOY_PWD')]) {
-                    sh '${DEPLOYER_CMD} --rollback -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOY_USER}" -pwd "${DEPLOY_PWD}"'
+                withCredentials([
+                    usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
+                ]) {
+                    sh '''
+                        "${DEPLOYER_CMD}" \
+                          --rollback \
+                          -project "${EPIC_NAME}" \
+                          -dc "${EPIC_NAME}" \
+                          -host "${DEPLOYER_HOST}" \
+                          -port "${DEPLOYER_PORT}" \
+                          -user "${DEPLOYER_USER}" \
+                          -pwd "${DEPLOYER_PWD}"
+                    '''
                 }
             }
         }
 
         stage('Zip Build Output') {
             steps {
-                sh 'cd "${WORKSPACE}" && zip -r build_output.zip build_output'
+                sh '''
+                    cd "${WORKSPACE}"
+                    zip -r build_output.zip build_output
+                '''
             }
         }
 
@@ -294,13 +388,21 @@ cd "${env.TEMP_SRC}"
     post {
         success {
             script {
-                sendDeploymentEmail('Success', '#27ae60', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:")
+                sendDeploymentEmail(
+                    'Success',
+                    '#27ae60',
+                    "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:"
+                )
             }
         }
 
         failure {
             script {
-                sendDeploymentEmail('Failed', '#c0392b', "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:")
+                sendDeploymentEmail(
+                    'Failed',
+                    '#c0392b',
+                    "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:"
+                )
             }
         }
 
@@ -340,7 +442,10 @@ body{font-family:Arial,sans-serif;background:#f4f4f4;color:#333}
 }
 
 def getSelected(val) {
-    if (!val?.trim()) { return [] }
+    if (!val?.trim()) {
+        return []
+    }
+
     return val.split(',').collect { it.trim() }.findAll { it && it != 'None' }
 }
 
@@ -357,7 +462,9 @@ def buildNames(epic, environmentName) {
 }
 
 def buildRepositoryEntries(pkgs, repoAlias) {
-    return pkgs.collect { pkg -> """                <Composite name="${pkg}" srcAlias="${repoAlias}" type="IS"/>""" }.join('\n')
+    return pkgs.collect { pkg ->
+        """                <Composite name="${pkg}" srcAlias="${repoAlias}" type="IS"/>"""
+    }.join('\n')
 }
 
 def buildISAliases(targets) {
@@ -375,27 +482,37 @@ def buildISAliases(targets) {
 }
 
 def buildMapTargetAliases(targets) {
-    return targets.collect { target -> """                <alias type="IS">${target.alias}</alias>""" }.join('\n')
+    return targets.collect { target ->
+        """                <alias type="IS">${target.alias}</alias>"""
+    }.join('\n')
 }
 
 def getEnvironmentConfig(envName) {
-    def config = [DEV: [branch: 'DEV'], QC: [branch: 'QC'], PROD: [branch: 'PROD']]
-    if (!config.containsKey(envName)) { error("Unsupported ENVIRONMENT: ${envName}") }
+    def config = [
+        DEV : [branch: 'DEV'],
+        QC  : [branch: 'QC'],
+        PROD: [branch: 'PROD']
+    ]
+
+    if (!config.containsKey(envName)) {
+        error("Unsupported ENVIRONMENT: ${envName}")
+    }
+
     return config[envName]
 }
 
 def getTargetConfigs(envName, scopeCsv) {
     def targetConfigMap = [
-        'DEV_APP01': [alias: 'DEV_APP01', host: '10.24.2.118', port: '5555'],
-        'DEV_APP02': [alias: 'DEV_APP02', host: '10.24.7.172', port: '5555'],
-        'QC_APP01' : [alias: 'QC_APP01',  host: '10.24.7.181', port: '5555'],
-        'QC_APP04' : [alias: 'QC_APP04',  host: '10.24.7.184', port: '5555'],
-        'PRD_APP01': [alias: 'PRD_APP01', host: '10.24.7.191', port: '5555'],
-        'PRD_APP02': [alias: 'PRD_APP02', host: '10.24.7.192', port: '5555']
+        'PREPROD_APP01': [alias: 'PREPROD_APP01', host: '10.7.248.74', port: '5555'],
+        'DEV_APP02'    : [alias: 'DEV_APP02',     host: '10.24.7.172', port: '5555'],
+        'QC_APP01'     : [alias: 'QC_APP01',      host: '10.24.7.181', port: '5555'],
+        'QC_APP04'     : [alias: 'QC_APP04',      host: '10.24.7.184', port: '5555'],
+        'PRD_APP01'    : [alias: 'PRD_APP01',     host: '10.24.7.191', port: '5555'],
+        'PRD_APP02'    : [alias: 'PRD_APP02',     host: '10.24.7.192', port: '5555']
     ]
 
     def allowedTargetsByEnvironment = [
-        DEV : ['DEV_APP01', 'DEV_APP02'],
+        DEV : ['PREPROD_APP01', 'DEV_APP02'],
         QC  : ['QC_APP01', 'QC_APP04'],
         PROD: ['PRD_APP01', 'PRD_APP02']
     ]
@@ -405,6 +522,10 @@ def getTargetConfigs(envName, scopeCsv) {
     selectedTargets.each { t ->
         if (!allowedTargetsByEnvironment[envName].contains(t)) {
             error("${t} is not allowed for environment ${envName}")
+        }
+
+        if (!targetConfigMap.containsKey(t)) {
+            error("No target configuration found for ${t}")
         }
     }
 
