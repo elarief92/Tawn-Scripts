@@ -27,7 +27,7 @@ properties([
                 fallbackScript: [classpath: [], sandbox: true, script: 'return ["PREPROD_APP01"]'],
                 script: [classpath: [], sandbox: true, script: '''
                     if (ENVIRONMENT == "DEV") {
-                        return ["PREPROD_APP01", "DEV_APP02"]
+                        return ["PREPROD_APP01", "PREPROD_APP02"]
                     }
                     else if (ENVIRONMENT == "QC") {
                         return ["QC_APP01", "QC_APP04"]
@@ -471,7 +471,7 @@ def buildNames(epic, environmentName) {
     def e = epic.trim()
     [
         PROJECT_NAME: e,
-        PROJECT_DESC: "Project created for EPIC ${e} on ${environmentName} environment",
+        PROJECT_DESC: "Project created for EPIC ${e} on ${environmentName} environment - ${new Date().format('yyyy-MM-dd HH:mm:ss')}",
         DEPLOYMENT_SET_NAME: "${e}_DEPLOYMENT_SET",
         DEPLOYMENT_MAP_NAME: "${e}_DEPLOYMENT_MAP",
         CANDIDATE_NAME: e
@@ -515,7 +515,7 @@ def getEnvironmentConfig(envName) {
 def getTargetConfigs(envName, scopeCsv) {
     def targetConfigMap = [
         'PREPROD_APP01': [alias: 'PREPROD_APP01', host: '10.7.248.74',  port: '5555'],
-        'DEV_APP02'    : [alias: 'DEV_APP02',     host: '10.24.7.172', port: '5555'],
+        'PREPROD_APP02': [alias: 'PREPROD_APP02', host: '10.7.248.75',  port: '5555'],
         'QC_APP01'     : [alias: 'QC_APP01',      host: '10.24.7.181', port: '5555'],
         'QC_APP04'     : [alias: 'QC_APP04',      host: '10.24.7.184', port: '5555'],
         'PRD_APP01'    : [alias: 'PRD_APP01',     host: '10.24.7.191', port: '5555'],
@@ -523,7 +523,7 @@ def getTargetConfigs(envName, scopeCsv) {
     ]
 
     def allowedTargetsByEnvironment = [
-        DEV : ['PREPROD_APP01', 'DEV_APP02'],
+        DEV : ['PREPROD_APP01', 'PREPROD_APP02'],
         QC  : ['QC_APP01', 'QC_APP04'],
         PROD: ['PRD_APP01', 'PRD_APP02']
     ]
