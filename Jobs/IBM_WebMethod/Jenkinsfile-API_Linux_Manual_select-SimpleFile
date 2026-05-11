@@ -196,19 +196,16 @@ pipeline {
                 sh '''
                     set -o pipefail
 
-                    export SAG_HOME=/sag/be1015
-                    export JAVA_HOME=/sag/be1015/jvm/jvm
                     export PATH=$JAVA_HOME/bin:$PATH
                     unset CLASSPATH
 
-                    export ANT_OPTS="-Xms1024m -Xmx12288m"
-                    export JAVA_OPTS="-Xms1024m -Xmx12288m"
+                    export ANT_OPTS="-Xms2g -Xmx16g -XX:+UseG1GC"
+                    export JAVA_OPTS="-Xms2g -Xmx16g -XX:+UseG1GC"
+                    export _JAVA_OPTIONS="-Xms2g -Xmx16g -XX:+UseG1GC"
 
                     cd "${SAG_HOME}/common/AssetBuildEnvironment/master_build"
 
-                    export ANT_ARGS="-Dbuild.output.dir=${BUILD_OUTPUT_DIR} -Dbuild.source.dir=${TEMP_SRC} -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true"
-
-                    "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" | tee "${BUILD_LOG_FILE}"
+                    ANT_ARGS="-Dbuild.output.dir=${BUILD_OUTPUT_DIR} -Dbuild.source.dir=${TEMP_SRC} -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true" "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" 2>&1 | tee "${BUILD_LOG_FILE}"
                 '''
             }
         }
