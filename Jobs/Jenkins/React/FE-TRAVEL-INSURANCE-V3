@@ -9,6 +9,7 @@ pipeline {
 
   environment {
     BRANCH_NAME = 'DEV'
+    NODE_TLS_REJECT_UNAUTHORIZED = '0'
   }
 
   stages {
@@ -36,8 +37,10 @@ pipeline {
             ],
 
             node: [
+              resetCmd: '',
               installCmd: 'set NODE_OPTIONS=--max-old-space-size=8192 && set ESBUILD_MAX_HEAP_SIZE=8192 && npm install --legacy-peer-deps',
-              buildCmd: 'npx nx build travel-insurance --configuration=development'
+              buildCmd: 'npx nx build travel-insurance --configuration=development',
+              testCoverageCmd: 'npx nx test travel-insurance --coverage --coverageReporters=lcov --coverageReporters=text --reporters=default --reporters=jest-junit'
             ],
 
             artifacts: [
@@ -50,7 +53,7 @@ pipeline {
               sources: 'apps/travel-insurance/src',
               inclusions: 'apps/travel-insurance/**',
               tsconfigPaths: 'apps/travel-insurance/tsconfig.json',
-              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map'
+              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**'
             ]
           )
         }

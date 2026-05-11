@@ -55,7 +55,21 @@ properties([
                 script: [
                     classpath: [],
                     sandbox: true,
-                    script: 'return ["PSUtilities", "zzCharan", "zzConnectivityCheck", "zzHanu", "zzwebmpoc"]'
+                    script: '''
+                        return [
+                            "PSUtilities",
+                            "TawncheckoutPayment",
+                            "TawnMedDomesticWorker",
+                            "TawnMobileApplication",
+                            "TawnMotorNonRetail",
+                            "TawnSMEMedicalProcess",
+                            "TawnSMESalesCRM",
+                            "zzCharan",
+                            "zzConnectivityCheck",
+                            "zzHanu",
+                            "zzwebmpoc"
+                        ]
+                    '''
                 ]
             ]
         ]
@@ -89,7 +103,7 @@ pipeline {
         GENERATED_XML = "${WORKSPACE}/generated/Deployment_ProjectAutomator.xml"
         BUILD_LOG_FILE = "${WORKSPACE}/generated/abe-build.log"
 
-        TEMPLATE_XML = 'deployer/templates/ProjectAutomator.Repository.template.xml'
+        TEMPLATE_XML = '01-deployer/templates/ProjectAutomator.Repository.template.xml'
 
         DEPLOYER_HOST = '127.0.0.1'
         DEPLOYER_PORT = '5555'
@@ -149,13 +163,18 @@ pipeline {
 
                     deleteDir()
 
-                    bbs_checkout(
+                   bbs_checkout(
                         branches: [[name: "*/${branchName}"]],
                         credentialsId: 'Admin_Bitbucket',
                         id: '06c55797-80ad-4cb9-bea7-299d2a91506e',
                         projectName: 'EI',
                         repositoryName: 'webmethods-source-code',
-                        serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+                        serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6',
+                    
+                        cloneOptions: [
+                            shallow: true,
+                            depth: 1
+                        ]
                     )
                 }
             }
@@ -169,8 +188,8 @@ pipeline {
                     }
 
                     for (pkg in CHANGED_PACKAGES) {
-                        if (!fileExists("assets/IS/packages/${pkg}")) {
-                            error("Package not found in repo: assets/IS/packages/${pkg}")
+                        if (!fileExists("IS/${pkg}")) {
+                            error("Package not found in repo: IS/${pkg}")
                         }
                     }
                 }
@@ -187,13 +206,13 @@ pipeline {
                 script {
                     for (pkg in CHANGED_PACKAGES) {
                         sh """
-                            if [ ! -d "${env.WORKSPACE}/assets/IS/packages/${pkg}" ]; then
+                            if [ ! -d "${env.WORKSPACE}/IS/${pkg}" ]; then
                                 echo "Missing package: ${pkg}"
                                 exit 1
                             fi
 
                             mkdir -p "${env.TEMP_SRC}/${pkg}"
-                            cp -R "${env.WORKSPACE}/assets/IS/packages/${pkg}/." "${env.TEMP_SRC}/${pkg}/"
+                            cp -R "${env.WORKSPACE}/IS/${pkg}/." "${env.TEMP_SRC}/${pkg}/"
                         """
                     }
                 }
@@ -481,7 +500,7 @@ def buildMapTargetAliases(targets) {
 
 def getEnvironmentConfig(envName) {
     def config = [
-        DEV : [branch: 'dev'],
+        DEV : [branch: 'DEV_CICD'],
         QC  : [branch: 'QC'],
         PROD: [branch: 'PROD']
     ]

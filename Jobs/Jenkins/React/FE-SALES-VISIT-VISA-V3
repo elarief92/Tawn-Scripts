@@ -9,6 +9,7 @@ pipeline {
 
   environment {
     BRANCH_NAME = 'DEV'
+    NODE_TLS_REJECT_UNAUTHORIZED = '0'
   }
 
   stages {
@@ -36,8 +37,10 @@ pipeline {
             ],
 
             node: [
+              resetCmd: '',
               installCmd: 'npm install --legacy-peer-deps',
-              buildCmd: 'npx nx build visit-visa --configuration=development'
+              buildCmd: 'npx nx build visit-visa --configuration=development',
+              testCoverageCmd: 'npx nx test visit-visa --coverage --coverageReporters=lcov --coverageReporters=text --reporters=default --reporters=jest-junit'
             ],
 
             artifacts: [
@@ -50,7 +53,7 @@ pipeline {
               sources: 'apps/visit-visa/src',
               inclusions: 'apps/visit-visa/**',
               tsconfigPaths: 'apps/visit-visa/tsconfig.json',
-              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map'
+              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**'
             ]
           )
         }
