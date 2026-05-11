@@ -39,7 +39,7 @@ pipeline {
 
             sonar: [
               server: 'SonarQube',
-              projectKey: 'BFF-WEB-RECOVERYPORTAL',
+              projectKey: 'BFF-WEB',
               sources: 'src/main/java',
               tests: 'src/test/java',
               binaries: 'target/classes',
