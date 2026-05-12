@@ -9,6 +9,7 @@ pipeline {
 
   environment {
     BRANCH_NAME = 'DEV'
+    NODE_TLS_REJECT_UNAUTHORIZED = '0'
   }
 
   stages {
@@ -36,8 +37,10 @@ pipeline {
             ],
 
             node: [
+              resetCmd: '',
               installCmd: 'set NODE_OPTIONS=--max-old-space-size=8192 && set ESBUILD_MAX_HEAP_SIZE=8192 && npm install --legacy-peer-deps',
-              buildCmd: 'npx nx build motor --configuration=development'
+              buildCmd: 'npx nx build motor --configuration=development',
+              testCoverageCmd: 'npx vitest run --coverage --coverage.reporter=lcov --coverage.reporter=text --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 
             artifacts: [
@@ -50,7 +53,7 @@ pipeline {
               sources: 'apps/motor/src',
               inclusions: 'apps/motor/**',
               tsconfigPaths: 'apps/motor/tsconfig.json',
-              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map'
+              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**'
             ]
           )
         }
