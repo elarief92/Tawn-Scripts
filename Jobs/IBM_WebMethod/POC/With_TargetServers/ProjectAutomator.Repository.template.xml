@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DeployerSpec exitOnError="true" sourceType="Repository">
+    <DeployerServer>
+        <host>@DEPLOYER_HOST_PORT@</host>
+        <user>${DEPLOYER_USER}</user>
+        <pwd>${DEPLOYER_PWD}</pwd>
+    </DeployerServer>
+
+    <Environment>
+        <IS>
+@IS_ALIASES@
+        </IS>
+
+        <Repository>
+            <repalias name="@REPO_ALIAS@">
+                <type>FlatFile</type>
+                <urlOrDirectory>@REPO_DIRECTORY@</urlOrDirectory>
+                <Test>true</Test>
+            </repalias>
+        </Repository>
+    </Environment>
+
+    <Projects projectPrefix="">
+        <Project description="@PROJECT_DESC@" ignoreMissingDependencies="true" name="@PROJECT_NAME@" overwrite="true" type="Repository">
+            <DeploymentSet autoResolve="full" description="" name="@DEPLOYMENT_SET_NAME@" srcAlias="@REPO_ALIAS@">
+@DEPLOYMENT_ENTRIES@
+            </DeploymentSet>
+
+            <DeploymentMap description="" name="@DEPLOYMENT_MAP_NAME@"/>
+            <MapSetMapping mapName="@DEPLOYMENT_MAP_NAME@" setName="@DEPLOYMENT_SET_NAME@">
+@MAP_TARGET_ALIASES@
+            </MapSetMapping>
+
+            <DeploymentCandidate description="" mapName="@DEPLOYMENT_MAP_NAME@" name="@CANDIDATE_NAME@"/>
+        </Project>
+    </Projects>
+</DeployerSpec>

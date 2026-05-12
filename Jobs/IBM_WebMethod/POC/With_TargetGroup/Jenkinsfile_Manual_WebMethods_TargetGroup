@@ -2,39 +2,75 @@ properties([
     parameters([
         string(name: 'EPIC_NAME', defaultValue: '', description: 'Use a Valid Jira Epic Number'),
 
-        [$class: 'ChoiceParameter', choiceType: 'PT_SINGLE_SELECT', name: 'ENVIRONMENT', description: 'Select environment',
-            script: [$class: 'GroovyScript',
+        [
+            $class: 'ChoiceParameter',
+            choiceType: 'PT_SINGLE_SELECT',
+            name: 'ENVIRONMENT',
+            description: 'Select environment',
+            script: [
+                $class: 'GroovyScript',
                 fallbackScript: [classpath: [], sandbox: true, script: 'return ["DEV"]'],
                 script: [classpath: [], sandbox: true, script: 'return ["DEV", "QC", "PROD"]']
             ]
         ],
 
-        [$class: 'CascadeChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select target servers',
-        referencedParameters: 'ENVIRONMENT', filterable: true, filterLength: 2,
-        script: [$class: 'GroovyScript',
-            fallbackScript: [classpath: [], sandbox: true, script: 'return ["PREPROD_APP01"]'],
-            script: [classpath: [], sandbox: true, script: '''
-                if (ENVIRONMENT == "DEV") {
-                    return ["PREPROD_APP01", "DEV_APP02"]
-                }
-                else if (ENVIRONMENT == "QC") {
-                    return ["QC_APP01", "QC_APP04"]
-                }
-                else if (ENVIRONMENT == "PROD") {
-                    return ["PRD_APP01", "PRD_APP02"]
-                }
-                else {
-                    return ["None"]
-                }
+        [
+            $class: 'CascadeChoiceParameter',
+            choiceType: 'PT_SINGLE_SELECT',
+            name: 'TARGET_GROUP',
+            description: 'Select Deployer target group',
+            referencedParameters: 'ENVIRONMENT',
+            filterable: true,
+            filterLength: 2,
+            script: [
+                $class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: true, script: 'return ["pre-prod"]'],
+                script: [classpath: [], sandbox: true, script: '''
+                    if (ENVIRONMENT == "DEV") {
+                        return ["pre-prod"]
+                    }
+                    else if (ENVIRONMENT == "QC") {
+                        return ["QC-GROUP"]
+                    }
+                    else if (ENVIRONMENT == "PROD") {
+                        return ["PROD-GROUP"]
+                    }
+                    else {
+                        return ["None"]
+                    }
                 ''']
             ]
         ],
 
-        [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'PACKAGES_TO_BUILD', description: 'Select packages to build and deploy',
-            filterable: true, filterLength: 2,
-            script: [$class: 'GroovyScript',
-                fallbackScript: [classpath: [], sandbox: true, script: 'return ["TawncheckoutPayment"]'],
-                script: [classpath: [], sandbox: true, script: 'return ["TawncheckoutPayment", "TawnMedDomesticWorker", "TawnMobileApplication", "TawnMotorNonRetail", "TawnSMEMedicalProcess", "TawnSMESalesCRM"]']
+        [
+            $class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            name: 'PACKAGES_TO_BUILD',
+            description: 'Select packages to build and deploy',
+            filterable: true,
+            filterLength: 2,
+            script: [
+                $class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: true, script: 'return ["PSUtilities"]'],
+                script: [
+                    classpath: [],
+                    sandbox: true,
+                    script: '''
+                        return [
+                            "PSUtilities",
+                            "TawncheckoutPayment",
+                            "TawnMedDomesticWorker",
+                            "TawnMobileApplication",
+                            "TawnMotorNonRetail",
+                            "TawnSMEMedicalProcess",
+                            "TawnSMESalesCRM",
+                            "zzCharan",
+                            "zzConnectivityCheck",
+                            "zzHanu",
+                            "zzwebmpoc"
+                        ]
+                    '''
+                ]
             ]
         ]
     ])
@@ -55,19 +91,24 @@ pipeline {
     environment {
         SAG_HOME = '/sag/be1015'
         JAVA_HOME = '/sag/be1015/jvm/jvm'
+
         ABE_BUILD_FILE = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
         DEPLOYER_BIN = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
         PROJECT_AUTOMATOR = "${DEPLOYER_BIN}/projectautomatorUnix.sh"
         DEPLOYER_CMD = "${DEPLOYER_BIN}/Deployer.sh"
+
         TEMP_SRC = "${WORKSPACE}/.tmp_build_src"
         BUILD_OUTPUT_DIR = "${WORKSPACE}/build_output"
         GENERATED_DIR = "${WORKSPACE}/generated"
         GENERATED_XML = "${WORKSPACE}/generated/Deployment_ProjectAutomator.xml"
         BUILD_LOG_FILE = "${WORKSPACE}/generated/abe-build.log"
-        TEMPLATE_XML = 'deployer/templates/ProjectAutomator.Repository.template.xml'
+
+        TEMPLATE_XML = '01-deployer/templates/ProjectAutomator.Repository.template.xml'
+
         DEPLOYER_HOST = '127.0.0.1'
         DEPLOYER_PORT = '5555'
         REPO_ALIAS = 'BuildRepo'
+
         EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
         EMAIL_SUBJECT = 'API Deployment'
         APPLICATION_NAME = 'webMethods API'
@@ -77,16 +118,26 @@ pipeline {
         stage('Validate Input') {
             steps {
                 script {
-                    if (!params.EPIC_NAME?.trim()) error("EPIC_NAME is required")
-                    if (!params.ENVIRONMENT?.trim()) error("ENVIRONMENT is required")
-                    if (getSelected(params.TARGET_SCOPE).isEmpty()) error("Select at least one target server")
+                    if (!params.EPIC_NAME?.trim()) {
+                        error("EPIC_NAME is required")
+                    }
+
+                    if (!params.ENVIRONMENT?.trim()) {
+                        error("ENVIRONMENT is required")
+                    }
+
+                    if (!params.TARGET_GROUP?.trim() || params.TARGET_GROUP == 'None') {
+                        error("Select target group")
+                    }
 
                     CHANGED_PACKAGES = getSelected(params.PACKAGES_TO_BUILD)
 
-                    if (CHANGED_PACKAGES.isEmpty()) error("Select at least one package")
+                    if (CHANGED_PACKAGES.isEmpty()) {
+                        error("Select at least one package")
+                    }
 
                     echo "Selected packages: ${CHANGED_PACKAGES.join(', ')}"
-                    echo "Selected targets: ${getSelected(params.TARGET_SCOPE).join(', ')}"
+                    echo "Selected target group: ${params.TARGET_GROUP}"
                 }
             }
         }
@@ -95,7 +146,7 @@ pipeline {
             steps {
                 script {
                     currentBuild.displayName = "${params.EPIC_NAME}"
-                    currentBuild.description = "EPIC=${params.EPIC_NAME} | ENV=${params.ENVIRONMENT}"
+                    currentBuild.description = "EPIC=${params.EPIC_NAME} | ENV=${params.ENVIRONMENT} | TARGET_GROUP=${params.TARGET_GROUP}"
                 }
             }
         }
@@ -116,13 +167,18 @@ pipeline {
             steps {
                 script {
                     def branchName = getEnvironmentConfig(params.ENVIRONMENT).branch
+
+                    echo "Environment selected: ${params.ENVIRONMENT}"
+                    echo "Branch selected for checkout: ${branchName}"
+
                     deleteDir()
+
                     bbs_checkout(
                         branches: [[name: "*/${branchName}"]],
                         credentialsId: 'Admin_Bitbucket',
-                        id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
-                        projectName: 'JIRA',
-                        repositoryName: 'sag',
+                        id: '06c55797-80ad-4cb9-bea7-299d2a91506e',
+                        projectName: 'EI',
+                        repositoryName: 'webmethods-source-code',
                         serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
                     )
                 }
@@ -132,11 +188,13 @@ pipeline {
         stage('Validate Repo Content') {
             steps {
                 script {
-                    if (!fileExists(env.TEMPLATE_XML)) {error("Template XML not found after checkout: ${env.TEMPLATE_XML}")}
+                    if (!fileExists(env.TEMPLATE_XML)) {
+                        error("Template XML not found after checkout: ${env.TEMPLATE_XML}")
+                    }
 
                     for (pkg in CHANGED_PACKAGES) {
-                        if (!fileExists("Packages/${pkg}")) {
-                            error("Package not found in repo: Packages/${pkg}")
+                        if (!fileExists("IS/${pkg}")) {
+                            error("Package not found in repo: IS/${pkg}")
                         }
                     }
                 }
@@ -153,13 +211,13 @@ pipeline {
                 script {
                     for (pkg in CHANGED_PACKAGES) {
                         sh """
-                            if [ ! -d "${env.WORKSPACE}/Packages/${pkg}" ]; then
+                            if [ ! -d "${env.WORKSPACE}/IS/${pkg}" ]; then
                                 echo "Missing package: ${pkg}"
                                 exit 1
                             fi
 
                             mkdir -p "${env.TEMP_SRC}/${pkg}"
-                            cp -R "${env.WORKSPACE}/Packages/${pkg}/." "${env.TEMP_SRC}/${pkg}/"
+                            cp -R "${env.WORKSPACE}/IS/${pkg}/." "${env.TEMP_SRC}/${pkg}/"
                         """
                     }
                 }
@@ -180,7 +238,12 @@ pipeline {
 
                     cd "${SAG_HOME}/common/AssetBuildEnvironment/master_build"
 
-                    ANT_ARGS="-Dbuild.output.dir=${BUILD_OUTPUT_DIR} -Dbuild.source.dir=${TEMP_SRC} -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true" "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" 2>&1 | tee "${BUILD_LOG_FILE}"
+                    "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" \
+                        -Dbuild.output.dir="${BUILD_OUTPUT_DIR}" \
+                        -Dbuild.source.dir="${TEMP_SRC}" \
+                        -Denable.checkout=false \
+                        -Denable.archive=false \
+                        -Denable.build.IS=true 2>&1 | tee "${BUILD_LOG_FILE}"
                 '''
             }
         }
@@ -207,7 +270,6 @@ pipeline {
         stage('Generate Project Automator XML') {
             steps {
                 script {
-                    def targets = getTargetConfigs(params.ENVIRONMENT, params.TARGET_SCOPE)
                     def names = buildNames(params.EPIC_NAME, params.ENVIRONMENT)
                     def xml = readFile(file: env.TEMPLATE_XML, encoding: 'UTF-8')
 
@@ -219,14 +281,16 @@ pipeline {
                     xml = xml.replace('@CANDIDATE_NAME@', names.CANDIDATE_NAME)
                     xml = xml.replace('@REPO_ALIAS@', env.REPO_ALIAS)
                     xml = xml.replace('@REPO_DIRECTORY@', env.BUILD_OUTPUT_DIR)
-                    xml = xml.replace('@IS_ALIASES@', buildISAliases(targets))
-                    xml = xml.replace('@MAP_TARGET_ALIASES@', buildMapTargetAliases(targets))
+
+                    xml = xml.replace('@TARGET_GROUP@', params.TARGET_GROUP)
+
                     xml = xml.replace('@DEPLOYMENT_ENTRIES@', buildRepositoryEntries(CHANGED_PACKAGES, env.REPO_ALIAS))
 
                     writeFile(file: env.GENERATED_XML, text: xml, encoding: 'UTF-8')
 
                     echo "Generated XML: ${env.GENERATED_XML}"
-                    echo "XML generated successfully. Content hidden to avoid exposing credentials."
+                    echo "Checking generated TargetGroup alias lines:"
+                    sh 'grep -n "<TargetGroup\\|<alias\\|<group" "${GENERATED_XML}" || true'
                 }
             }
         }
@@ -271,7 +335,17 @@ pipeline {
                 withCredentials([
                     usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
                 ]) {
-                    sh '''chmod +x "${DEPLOYER_CMD}" || true; "${DEPLOYER_CMD}" --checkpoint -dc "${EPIC_NAME}" -project "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}"'''
+                    sh '''
+                        chmod +x "${DEPLOYER_CMD}" || true
+
+                        "${DEPLOYER_CMD}" --checkpoint \
+                            -dc "${EPIC_NAME}" \
+                            -project "${EPIC_NAME}" \
+                            -host "${DEPLOYER_HOST}" \
+                            -port "${DEPLOYER_PORT}" \
+                            -user "${DEPLOYER_USER}" \
+                            -pwd "${DEPLOYER_PWD}"
+                    '''
                 }
             }
         }
@@ -283,7 +357,16 @@ pipeline {
                         withCredentials([
                             usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
                         ]) {
-                            sh '''"${DEPLOYER_CMD}" --deploy -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}" -force'''
+                            sh '''
+                                "${DEPLOYER_CMD}" --deploy \
+                                    -project "${EPIC_NAME}" \
+                                    -dc "${EPIC_NAME}" \
+                                    -host "${DEPLOYER_HOST}" \
+                                    -port "${DEPLOYER_PORT}" \
+                                    -user "${DEPLOYER_USER}" \
+                                    -pwd "${DEPLOYER_PWD}" \
+                                    -force
+                            '''
                         }
                     }
 
@@ -306,7 +389,15 @@ pipeline {
                 withCredentials([
                     usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
                 ]) {
-                    sh '''"${DEPLOYER_CMD}" --rollback -project "${EPIC_NAME}" -dc "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}"'''
+                    sh '''
+                        "${DEPLOYER_CMD}" --rollback \
+                            -project "${EPIC_NAME}" \
+                            -dc "${EPIC_NAME}" \
+                            -host "${DEPLOYER_HOST}" \
+                            -port "${DEPLOYER_PORT}" \
+                            -user "${DEPLOYER_USER}" \
+                            -pwd "${DEPLOYER_PWD}"
+                    '''
                 }
             }
         }
@@ -361,69 +452,76 @@ def sendDeploymentEmail(status, color, message) {
         mimeType: 'text/html',
         recipientProviders: [[$class: 'DevelopersRecipientProvider']],
         body: """\
-                <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><style>
-                body{font-family:Arial,sans-serif;background:#f4f4f4;color:#333}
-                .container{width:600px;margin:20px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 5px rgba(0,0,0,.1)}
-                .header{background:${color};color:#fff;padding:18px;text-align:center;font-size:22px;font-weight:bold}
-                .content{padding:20px}.details{background:#ecf0f1;padding:15px;border-radius:6px;margin:20px 0}.details p{margin:6px 0}
-                .footer{font-size:14px;color:#7f8c8d;text-align:center;padding:15px}
-                </style></head><body><div class="container"><div class="header">TAWUNIYA - Deployment ${status}</div>
-                <div class="content"><p>Dears,</p><p>${message}</p><div class="details">
-                <p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
-                <p><strong>Environment:</strong> ${params.ENVIRONMENT}</p>
-                <p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
-                <p><strong>Packages:</strong> ${getSelected(params.PACKAGES_TO_BUILD).join(', ')}</p>
-                <p><strong>Status:</strong> ${status}</p>
-                <p><strong>Deployment Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
-                <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
-                </div><p>Please be advised accordingly.</p></div>
-                <div class="footer"><p>Thank you for your cooperation.</p><p><strong>Best regards,</strong><br>The DevOps Team</p></div>
-                </div></body></html>
-                """
+            <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><style>
+            body{font-family:Arial,sans-serif;background:#f4f4f4;color:#333}
+            .container{width:600px;margin:20px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 5px rgba(0,0,0,.1)}
+            .header{background:${color};color:#fff;padding:18px;text-align:center;font-size:22px;font-weight:bold}
+            .content{padding:20px}.details{background:#ecf0f1;padding:15px;border-radius:6px;margin:20px 0}.details p{margin:6px 0}
+            .footer{font-size:14px;color:#7f8c8d;text-align:center;padding:15px}
+            </style></head><body><div class="container"><div class="header">TAWUNIYA - Deployment ${status}</div>
+            <div class="content"><p>Dears,</p><p>${message}</p><div class="details">
+            <p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
+            <p><strong>Environment:</strong> ${params.ENVIRONMENT}</p>
+            <p><strong>Target Group:</strong> ${params.TARGET_GROUP}</p>
+            <p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
+            <p><strong>Packages:</strong> ${getSelected(params.PACKAGES_TO_BUILD).join(', ')}</p>
+            <p><strong>Status:</strong> ${status}</p>
+            <p><strong>Deployment Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
+            <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
+            </div><p>Please be advised accordingly.</p></div>
+            <div class="footer"><p>Thank you for your cooperation.</p><p><strong>Best regards,</strong><br>The DevOps Team</p></div>
+            </div></body></html>
+        """
     )
 }
 
-def getSelected(val) { val?.trim() ? val.split(',').collect { it.trim() }.findAll { it && it != 'None' } : [] }
+def getSelected(val) {
+    val?.trim() ? val.split(',').collect { it.trim() }.findAll { it && it != 'None' } : []
+}
 
 def buildNames(epic, environmentName) {
     def e = epic.trim()
-    [PROJECT_NAME: e, PROJECT_DESC: "Project created for EPIC ${e} on ${environmentName} environment", DEPLOYMENT_SET_NAME: "${e}_DEPLOYMENT_SET", DEPLOYMENT_MAP_NAME: "${e}_DEPLOYMENT_MAP", CANDIDATE_NAME: e]
+    [
+        PROJECT_NAME       : e,
+        PROJECT_DESC       : "Project created for EPIC ${e} on ${environmentName} environment - ${new Date().format('yyyy-MM-dd HH:mm:ss')}",
+        DEPLOYMENT_SET_NAME: "${e}_DEPLOYMENT_SET",
+        DEPLOYMENT_MAP_NAME: "${e}_DEPLOYMENT_MAP",
+        CANDIDATE_NAME     : e
+    ]
 }
 
-def buildRepositoryEntries(pkgs, repoAlias) { pkgs.collect { """<Composite name="${it}" srcAlias="${repoAlias}" type="IS"/>""" }.join('\n') }
-
-def buildISAliases(targets) {
-    targets.collect { t -> """            <isalias name="${t.alias}">
-                <host>${t.host}</host><port>${t.port}</port><user>\${IS_USER}</user><pwd>\${IS_PWD}</pwd>
-                <useSSL>false</useSSL><installDeployerResource>false</installDeployerResource><Test>false</Test>
-            </isalias>""" }.join('\n')
+def buildRepositoryEntries(pkgs, repoAlias) {
+    pkgs.collect {
+        """                <Composite displayName="${it}" name="${it}" srcAlias="${repoAlias}" type="IS"/>"""
+    }.join('\n')
 }
 
-def buildMapTargetAliases(targets) { targets.collect { """<alias type="IS">${it.alias}</alias>""" }.join('\n') }
+def buildTargetGroupAliases(groupName) {
+    def targetGroups = [
+        'pre-prod'  : ['PREPROD_APP01', 'PREPROD_APP02'],
+        'QC-GROUP'  : ['QC_APP01', 'QC_APP04'],
+        'PROD-GROUP': ['PRD_APP01', 'PRD_APP02']
+    ]
+
+    if (!targetGroups[groupName]) {
+        error("Unknown target group: ${groupName}")
+    }
+
+    return targetGroups[groupName].collect {
+        """            <alias type="IS">${it}</alias>"""
+    }.join('\n')
+}
 
 def getEnvironmentConfig(envName) {
-    def config = [DEV: [branch: 'DEV'], QC: [branch: 'QC'], PROD: [branch: 'PROD']]
-    if (!config[envName]) error("Unsupported ENVIRONMENT: ${envName}")
+    def config = [
+        DEV : [branch: 'DEV_CICD'],
+        QC  : [branch: 'QC'],
+        PROD: [branch: 'PROD']
+    ]
+
+    if (!config[envName]) {
+        error("Unsupported ENVIRONMENT: ${envName}")
+    }
+
     config[envName]
-}
-
-def getTargetConfigs(envName, scopeCsv) {
-    def targetConfigMap = [
-    'PREPROD_APP01': [alias: 'PREPROD_APP01', host: '10.7.248.74',  port: '5555'],
-    'DEV_APP02'    : [alias: 'DEV_APP02',     host: '10.24.7.172', port: '5555'],
-    'QC_APP01'     : [alias: 'QC_APP01',      host: '10.24.7.181', port: '5555'],
-    'QC_APP04'     : [alias: 'QC_APP04',      host: '10.24.7.184', port: '5555'],
-    'PRD_APP01'    : [alias: 'PRD_APP01',     host: '10.24.7.191', port: '5555'],
-    'PRD_APP02'    : [alias: 'PRD_APP02',     host: '10.24.7.192', port: '5555']
-    ]
-
-    def allowedTargetsByEnvironment = [
-        DEV : ['PREPROD_APP01', 'DEV_APP02'],
-        QC  : ['QC_APP01', 'QC_APP04'],
-        PROD: ['PRD_APP01', 'PRD_APP02']
-    ]
-
-    def selectedTargets = getSelected(scopeCsv)
-    selectedTargets.each { t -> if (!allowedTargetsByEnvironment[envName]?.contains(t)) error("${t} is not allowed for environment ${envName}"); if (!targetConfigMap[t]) error("No target configuration found for ${t}") }
-    selectedTargets.collect { targetConfigMap[it] }
 }

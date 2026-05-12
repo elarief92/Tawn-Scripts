@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DeployerSpec exitOnError="true" sourceType="Repository">
+    <DeployerServer>
+        <host>@DEPLOYER_HOST_PORT@</host>
+        <user>${DEPLOYER_USER}</user>
+        <pwd>${DEPLOYER_PWD}</pwd>
+    </DeployerServer>
+
+    <Environment>
+        <Repository>
+            <repalias name="@REPO_ALIAS@">
+                <type>FlatFile</type>
+                <urlOrDirectory>@REPO_DIRECTORY@</urlOrDirectory>
+                <createIndex>false</createIndex>
+                <Test>false</Test>
+            </repalias>
+        </Repository>
+    </Environment>
+
+    <Projects projectPrefix="">
+        <Project description="@PROJECT_DESC@" name="@PROJECT_NAME@" overwrite="false" type="Repository">
+            <ProjectProperties>
+                <Property name="projectLocking">false</Property>
+                <Property name="concurrentDeployment">true</Property>
+                <Property name="ignoreMissingDependencies">true</Property>
+                <Property name="isTransactionalDeployment">false</Property>
+            </ProjectProperties>
+
+            <DeploymentSet autoResolve="full" description="" name="@DEPLOYMENT_SET_NAME@" srcAlias="@REPO_ALIAS@">
+@DEPLOYMENT_ENTRIES@
+            </DeploymentSet>
+
+            <DeploymentMap description="" name="@DEPLOYMENT_MAP_NAME@"/>
+
+            <MapSetMapping mapName="@DEPLOYMENT_MAP_NAME@" setName="@DEPLOYMENT_SET_NAME@">
+                <group type="IS">@TARGET_GROUP@</group>
+            </MapSetMapping>
+
+            <DeploymentCandidate description="" mapName="@DEPLOYMENT_MAP_NAME@" name="@CANDIDATE_NAME@"/>
+        </Project>
+    </Projects>
+</DeployerSpec>
