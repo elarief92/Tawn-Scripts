@@ -84,7 +84,7 @@ pipeline {
         stage('Send Start Email') {
             steps {
                 script {
-                    sendDeploymentEmail('Started', '#f39c12', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been started as follows:")
+                    sendDeploymentEmail('Started', '#2b2626', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been started as follows:")
                 }
             }
         }
@@ -286,11 +286,11 @@ chmod +x "${PROJECT_AUTOMATOR}" || true
 
     post {
         success {
-            script {  sendDeploymentEmail('Success', '#27ae60', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:")  }
+            script {  sendDeploymentEmail('Success', '#2b2626', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:")  }
         }
 
         failure {
-            script {  sendDeploymentEmail('Failed', '#c0392b', "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:")  }
+            script {  sendDeploymentEmail('Failed', '#2b2626', "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:")  }
         }
 
         always {  echo "Pipeline execution finished."  }

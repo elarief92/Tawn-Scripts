@@ -10,6 +10,12 @@ properties([
             name: 'CONFIRM_ROLLBACK',
             defaultValue: false,
             description: 'Must be checked before rollback execution'
+        ),
+
+        booleanParam(
+            name: 'DELETE_PROJECT_AFTER_ROLLBACK',
+            defaultValue: true,
+            description: 'Delete Deployer candidate/project after successful rollback'
         )
     ])
 ])
@@ -38,9 +44,11 @@ pipeline {
     }
 
     stages {
+
         stage('Validate Input') {
             steps {
                 script {
+
                     if (!params.EPIC_NAME?.trim()) {
                         error("EPIC_NAME is required")
                     }
@@ -54,11 +62,11 @@ pipeline {
                     }
 
                     currentBuild.displayName = "ROLLBACK-${params.EPIC_NAME}"
-                    currentBuild.description = "Rollback EPIC=${params.EPIC_NAME} | ENV=${params.ENVIRONMENT}"
+                    currentBuild.description = "Rollback EPIC=${params.EPIC_NAME}"
 
                     echo "Rollback Project: ${params.EPIC_NAME}"
                     echo "Rollback Candidate: ${params.EPIC_NAME}"
-                    echo "Environment: ${params.ENVIRONMENT}"
+                    echo "Delete project after rollback: ${params.DELETE_PROJECT_AFTER_ROLLBACK}"
                 }
             }
         }
@@ -66,8 +74,9 @@ pipeline {
         stage('Approval Before Rollback') {
             steps {
                 script {
-                    input(
-                        message: "Confirm rollback for EPIC ${params.EPIC_NAME} on ${params.ENVIRONMENT}?",
+
+                    def approval = input(
+                        message: "Confirm rollback for EPIC ${params.EPIC_NAME} ?",
                         ok: "Rollback Now",
                         parameters: [
                             string(
@@ -77,6 +86,8 @@ pipeline {
                             )
                         ]
                     )
+
+                    env.APPROVER_COMMENT = approval
                 }
             }
         }
@@ -84,9 +95,10 @@ pipeline {
         stage('Send Rollback Start Email') {
             steps {
                 script {
+
                     sendRollbackEmail(
                         'Started',
-                        '#f39c12',
+                        '#2b2626',
                         "Rollback has been started for ${env.APPLICATION_NAME}."
                     )
                 }
@@ -95,11 +107,21 @@ pipeline {
 
         stage('Execute Rollback') {
             steps {
+
                 withCredentials([
-                    usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
+                    usernamePassword(
+                        credentialsId: 'IS_Target_Preprod',
+                        usernameVariable: 'DEPLOYER_USER',
+                        passwordVariable: 'DEPLOYER_PWD'
+                    )
                 ]) {
+
                     sh '''
                         chmod +x "${DEPLOYER_CMD}" || true
+
+                        echo "Executing rollback..."
+                        echo "Project: ${EPIC_NAME}"
+                        echo "Candidate: ${EPIC_NAME}"
 
                         "${DEPLOYER_CMD}" --rollback \
                             -project "${EPIC_NAME}" \
@@ -108,6 +130,76 @@ pipeline {
                             -port "${DEPLOYER_PORT}" \
                             -user "${DEPLOYER_USER}" \
                             -pwd "${DEPLOYER_PWD}"
+
+                        echo "Rollback completed successfully."
+                    '''
+                }
+            }
+        }
+
+        stage('Delete Deployment Candidate') {
+
+            when {
+                expression { return params.DELETE_PROJECT_AFTER_ROLLBACK }
+            }
+
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'IS_Target_Preprod',
+                        usernameVariable: 'DEPLOYER_USER',
+                        passwordVariable: 'DEPLOYER_PWD'
+                    )
+                ]) {
+
+                    sh '''
+                        echo "Deleting deployment candidate/resources..."
+                        echo "Project: ${EPIC_NAME}"
+                        echo "Candidate: ${EPIC_NAME}"
+
+                        "${DEPLOYER_CMD}" --delete \
+                            -project "${EPIC_NAME}" \
+                            -dc "${EPIC_NAME}" \
+                            -host "${DEPLOYER_HOST}" \
+                            -port "${DEPLOYER_PORT}" \
+                            -user "${DEPLOYER_USER}" \
+                            -pwd "${DEPLOYER_PWD}" || true
+
+                        echo "Deployment candidate cleanup completed."
+                    '''
+                }
+            }
+        }
+
+        stage('Delete Deployer Project') {
+
+            when {
+                expression { return params.DELETE_PROJECT_AFTER_ROLLBACK }
+            }
+
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'IS_Target_Preprod',
+                        usernameVariable: 'DEPLOYER_USER',
+                        passwordVariable: 'DEPLOYER_PWD'
+                    )
+                ]) {
+
+                    sh '''
+                        echo "Deleting Deployer project..."
+                        echo "Project: ${EPIC_NAME}"
+
+                        "${DEPLOYER_CMD}" --delete \
+                            -project "${EPIC_NAME}" \
+                            -host "${DEPLOYER_HOST}" \
+                            -port "${DEPLOYER_PORT}" \
+                            -user "${DEPLOYER_USER}" \
+                            -pwd "${DEPLOYER_PWD}" || true
+
+                        echo "Deployer project cleanup completed."
                     '''
                 }
             }
@@ -115,21 +207,26 @@ pipeline {
     }
 
     post {
+
         success {
+
             script {
+
                 sendRollbackEmail(
                     'Success',
-                    '#27ae60',
+                    '#2b2626',
                     "Rollback has been completed successfully for ${env.APPLICATION_NAME}."
                 )
             }
         }
 
         failure {
+
             script {
+
                 sendRollbackEmail(
                     'Failed',
-                    '#c0392b',
+                    '#2b2626',
                     "Rollback has failed for ${env.APPLICATION_NAME}."
                 )
             }
@@ -142,52 +239,83 @@ pipeline {
 }
 
 def sendRollbackEmail(status, color, message) {
+
     emailext(
         to: "${env.EMAIL_RECIPIENTS}",
         subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status}",
         mimeType: 'text/html',
         recipientProviders: [[$class: 'DevelopersRecipientProvider']],
         body: """\
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <style>
-                    body{font-family:Arial,sans-serif;background:#f4f4f4;color:#333}
-                    .container{width:600px;margin:20px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 5px rgba(0,0,0,.1)}
-                    .header{background:${color};color:#fff;padding:18px;text-align:center;font-size:22px;font-weight:bold}
-                    .content{padding:20px}
-                    .details{background:#ecf0f1;padding:15px;border-radius:6px;margin:20px 0}
-                    .details p{margin:6px 0}
-                    .footer{font-size:14px;color:#7f8c8d;text-align:center;padding:15px}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">TAWUNIYA - Rollback ${status}</div>
-                    <div class="content">
-                        <p>Dears,</p>
-                        <p>${message}</p>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+body{font-family:Arial,sans-serif;background:#f4f4f4;color:#333}
+.container{width:600px;margin:20px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 5px rgba(0,0,0,.1)}
+.header{background:${color};color:#fff;padding:18px;text-align:center;font-size:22px;font-weight:bold}
+.content{padding:20px}
+.details{background:#ecf0f1;padding:15px;border-radius:6px;margin:20px 0}
+.details p{margin:6px 0}
+.footer{font-size:14px;color:#7f8c8d;text-align:center;padding:15px}
+</style>
+</head>
 
-                        <div class="details">
-                            <p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
-                            <p><strong>Environment:</strong> ${params.ENVIRONMENT}</p>
-                            <p><strong>EPIC / Project:</strong> ${params.EPIC_NAME}</p>
-                            <p><strong>Deployment Candidate:</strong> ${params.EPIC_NAME}</p>
-                            <p><strong>Status:</strong> ${status}</p>
-                            <p><strong>Rollback Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
-                            <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
-                        </div>
+<body>
 
-                        <p>Please be advised accordingly.</p>
-                    </div>
-                    <div class="footer">
-                        <p>Thank you for your cooperation.</p>
-                        <p><strong>Best regards,</strong><br>The DevOps Team</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-        """
+<div class="container">
+
+<div class="header">
+TAWUNIYA - Rollback ${status}
+</div>
+
+<div class="content">
+
+<p>Dears,</p>
+
+<p>${message}</p>
+
+<div class="details">
+
+<p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
+
+<p><strong>EPIC / Project:</strong> ${params.EPIC_NAME}</p>
+
+<p><strong>Deployment Candidate:</strong> ${params.EPIC_NAME}</p>
+
+<p><strong>Delete Project After Rollback:</strong> ${params.DELETE_PROJECT_AFTER_ROLLBACK}</p>
+
+<p><strong>Approval Comment:</strong> ${env.APPROVER_COMMENT ?: 'N/A'}</p>
+
+<p><strong>Status:</strong> ${status}</p>
+
+<p><strong>Rollback Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
+
+<p><strong>Build URL:</strong>
+<a href="${env.BUILD_URL}">${env.BUILD_URL}</a>
+</p>
+
+</div>
+
+<p>Please be advised accordingly.</p>
+
+</div>
+
+<div class="footer">
+
+<p>Thank you for your cooperation.</p>
+
+<p>
+<strong>Best regards,</strong><br>
+The DevOps Team
+</p>
+
+</div>
+
+</div>
+
+</body>
+</html>
+"""
     )
 }

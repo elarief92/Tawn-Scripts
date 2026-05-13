@@ -146,7 +146,7 @@ pipeline {
                 script {
                     sendDeploymentEmail(
                         'Started',
-                        '#f39c12',
+                        '#2b2626',
                         "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been started as follows:"
                     )
                 }
@@ -463,7 +463,7 @@ stage('Rollback (if needed)') {
             script {
                 sendDeploymentEmail(
                     'Success',
-                    '#27ae60',
+                    '#2b2626',
                     "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:"
                 )
             }
@@ -473,7 +473,7 @@ stage('Rollback (if needed)') {
             script {
                 sendDeploymentEmail(
                     'Failed',
-                    '#c0392b',
+                    '#2b2626',
                     "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:"
                 )
             }
