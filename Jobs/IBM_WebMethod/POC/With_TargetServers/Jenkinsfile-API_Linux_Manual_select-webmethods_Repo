@@ -196,6 +196,43 @@ pipeline {
             }
         }
 
+        stage('Clean Existing Deployer Project') {
+    steps {
+        withCredentials([
+            usernamePassword(
+                credentialsId: 'IS_Target_Preprod',
+                usernameVariable: 'DEPLOYER_USER',
+                passwordVariable: 'DEPLOYER_PWD'
+            )
+        ]) {
+            sh '''
+                echo "Cleaning existing Deployer resources for project: ${EPIC_NAME}"
+
+                chmod +x "${DEPLOYER_CMD}" || true
+
+                echo "Step 1: Delete deployment candidate if exists..."
+                "${DEPLOYER_CMD}" --delete \
+                    -project "${EPIC_NAME}" \
+                    -dc "${EPIC_NAME}" \
+                    -host "${DEPLOYER_HOST}" \
+                    -port "${DEPLOYER_PORT}" \
+                    -user "${DEPLOYER_USER}" \
+                    -pwd "${DEPLOYER_PWD}" || true
+
+                echo "Step 2: Delete Deployer project if exists..."
+                "${DEPLOYER_CMD}" --delete \
+                    -project "${EPIC_NAME}" \
+                    -host "${DEPLOYER_HOST}" \
+                    -port "${DEPLOYER_PORT}" \
+                    -user "${DEPLOYER_USER}" \
+                    -pwd "${DEPLOYER_PWD}" || true
+
+                echo "Cleanup completed. Continuing with new project creation."
+            '''
+        }
+    }
+}
+
         stage('Prepare Build Source') {
             steps {
                 sh '''
