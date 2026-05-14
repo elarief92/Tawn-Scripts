@@ -40,7 +40,7 @@ pipeline {
               resetCmd: '',
               installCmd: 'npm install --legacy-peer-deps',
               buildCmd: 'npx nx build visit-visa --configuration=development',
-              testCoverageCmd: 'npx nx test visit-visa --coverage --coverageReporters=lcov --coverageReporters=text --reporters=default --reporters=jest-junit'
+              testCoverageCmd: 'npx vitest run --coverage --config apps/visit-visa/vitest.config.mts --dir apps/visit-visa --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 
             artifacts: [
