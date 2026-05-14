@@ -52,6 +52,7 @@ pipeline {
               sources: '.',
               inclusions: '**/*',
               tsconfigPaths: 'tsconfig.json',
+              lcovReportPath: 'coverage/lcov.info',
               exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/.next/**,**/coverage/**,**/reports/**'
             ]
           )

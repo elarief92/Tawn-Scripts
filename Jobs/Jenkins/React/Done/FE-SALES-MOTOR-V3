@@ -40,7 +40,7 @@ pipeline {
               resetCmd: '',
               installCmd: 'set NODE_OPTIONS=--max-old-space-size=8192 && set ESBUILD_MAX_HEAP_SIZE=8192 && npm install --legacy-peer-deps',
               buildCmd: 'npx nx build motor --configuration=development',
-              testCoverageCmd: 'npx vitest run --coverage --coverage.reporter=lcov --coverage.reporter=text --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
+              testCoverageCmd: 'npx vitest run --coverage --config apps/motor/vitest.config.mts --dir apps/motor --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 
             artifacts: [
@@ -53,6 +53,7 @@ pipeline {
               sources: 'apps/motor/src',
               inclusions: 'apps/motor/**',
               tsconfigPaths: 'apps/motor/tsconfig.json',
+              lcovReportPath: 'coverage/lcov.info',
               exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**'
             ]
           )

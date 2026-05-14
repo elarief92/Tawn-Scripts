@@ -53,6 +53,7 @@ pipeline {
               sources: 'apps/travel-insurance/src',
               inclusions: 'apps/travel-insurance/**',
               tsconfigPaths: 'apps/travel-insurance/tsconfig.json',
+              lcovReportPath: 'coverage/lcov.info',
               exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**'
             ]
           )
