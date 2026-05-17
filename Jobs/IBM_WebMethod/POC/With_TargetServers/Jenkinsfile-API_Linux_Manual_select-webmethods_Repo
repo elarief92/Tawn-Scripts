@@ -77,7 +77,7 @@ properties([
 ])
 
 def CHANGED_PACKAGES = []
-def DEPLOY_STATUS = "SUCCESS"
+def NEED_ROLLBACK = false
 
 pipeline {
     agent { label 'SAG-PREP-IPP02' }
@@ -163,14 +163,13 @@ pipeline {
 
                     deleteDir()
 
-                   bbs_checkout(
+                    bbs_checkout(
                         branches: [[name: "*/${branchName}"]],
                         credentialsId: 'Admin_Bitbucket',
                         id: '06c55797-80ad-4cb9-bea7-299d2a91506e',
                         projectName: 'EI',
                         repositoryName: 'webmethods-source-code',
                         serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6',
-                    
                         cloneOptions: [
                             shallow: true,
                             depth: 1
@@ -197,41 +196,41 @@ pipeline {
         }
 
         stage('Clean Existing Deployer Project') {
-    steps {
-        withCredentials([
-            usernamePassword(
-                credentialsId: 'IS_Target_Preprod',
-                usernameVariable: 'DEPLOYER_USER',
-                passwordVariable: 'DEPLOYER_PWD'
-            )
-        ]) {
-            sh '''
-                echo "Cleaning existing Deployer resources for project: ${EPIC_NAME}"
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'IS_Target_Preprod',
+                        usernameVariable: 'DEPLOYER_USER',
+                        passwordVariable: 'DEPLOYER_PWD'
+                    )
+                ]) {
+                    sh '''
+                        echo "Cleaning existing Deployer resources for project: ${EPIC_NAME}"
 
-                chmod +x "${DEPLOYER_CMD}" || true
+                        chmod +x "${DEPLOYER_CMD}" || true
 
-                echo "Step 1: Delete deployment candidate if exists..."
-                "${DEPLOYER_CMD}" --delete \
-                    -project "${EPIC_NAME}" \
-                    -dc "${EPIC_NAME}" \
-                    -host "${DEPLOYER_HOST}" \
-                    -port "${DEPLOYER_PORT}" \
-                    -user "${DEPLOYER_USER}" \
-                    -pwd "${DEPLOYER_PWD}" || true
+                        echo "Step 1: Delete deployment candidate if exists..."
+                        "${DEPLOYER_CMD}" --delete \
+                            -project "${EPIC_NAME}" \
+                            -dc "${EPIC_NAME}" \
+                            -host "${DEPLOYER_HOST}" \
+                            -port "${DEPLOYER_PORT}" \
+                            -user "${DEPLOYER_USER}" \
+                            -pwd "${DEPLOYER_PWD}" || true
 
-                echo "Step 2: Delete Deployer project if exists..."
-                "${DEPLOYER_CMD}" --delete \
-                    -project "${EPIC_NAME}" \
-                    -host "${DEPLOYER_HOST}" \
-                    -port "${DEPLOYER_PORT}" \
-                    -user "${DEPLOYER_USER}" \
-                    -pwd "${DEPLOYER_PWD}" || true
+                        echo "Step 2: Delete Deployer project if exists..."
+                        "${DEPLOYER_CMD}" --delete \
+                            -project "${EPIC_NAME}" \
+                            -host "${DEPLOYER_HOST}" \
+                            -port "${DEPLOYER_PORT}" \
+                            -user "${DEPLOYER_USER}" \
+                            -pwd "${DEPLOYER_PWD}" || true
 
-                echo "Cleanup completed. Continuing with new project creation."
-            '''
+                        echo "Cleanup completed. Continuing with new project creation."
+                    '''
+                }
+            }
         }
-    }
-}
 
         stage('Prepare Build Source') {
             steps {
@@ -268,7 +267,7 @@ pipeline {
                     export JAVA_OPTS="-Xms2g -Xmx16g -XX:+UseG1GC"
                     export _JAVA_OPTIONS="-Xms2g -Xmx16g -XX:+UseG1GC"
 
-                   "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" -Dbuild.output.dir="${BUILD_OUTPUT_DIR}" -Dbuild.source.dir="${TEMP_SRC}" -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true 2>&1 | tee "${BUILD_LOG_FILE}"
+                    "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" -Dbuild.output.dir="${BUILD_OUTPUT_DIR}" -Dbuild.source.dir="${TEMP_SRC}" -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true 2>&1 | tee "${BUILD_LOG_FILE}"
                 '''
             }
         }
@@ -351,25 +350,32 @@ pipeline {
         stage('Create Snapshot') {
             steps {
                 script {
-                    if (!fileExists(env.DEPLOYER_CMD)) {
-                        error("Deployer command not found: ${env.DEPLOYER_CMD}")
+                    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                        if (!fileExists(env.DEPLOYER_CMD)) {
+                            error("Deployer command not found: ${env.DEPLOYER_CMD}")
+                        }
+
+                        withCredentials([
+                            usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
+                        ]) {
+                            sh '''
+                                chmod +x "${DEPLOYER_CMD}" || true
+
+                                "${DEPLOYER_CMD}" --checkpoint \
+                                    -dc "${EPIC_NAME}" \
+                                    -project "${EPIC_NAME}" \
+                                    -host "${DEPLOYER_HOST}" \
+                                    -port "${DEPLOYER_PORT}" \
+                                    -user "${DEPLOYER_USER}" \
+                                    -pwd "${DEPLOYER_PWD}"
+                            '''
+                        }
                     }
-                }
 
-                withCredentials([
-                    usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
-                ]) {
-                    sh '''
-                        chmod +x "${DEPLOYER_CMD}" || true
-
-                        "${DEPLOYER_CMD}" --checkpoint \
-                            -dc "${EPIC_NAME}" \
-                            -project "${EPIC_NAME}" \
-                            -host "${DEPLOYER_HOST}" \
-                            -port "${DEPLOYER_PORT}" \
-                            -user "${DEPLOYER_USER}" \
-                            -pwd "${DEPLOYER_PWD}"
-                    '''
+                    if (currentBuild.currentResult == 'FAILURE') {
+                        NEED_ROLLBACK = true
+                        echo "Create Snapshot failed. Rollback will be triggered."
+                    }
                 }
             }
         }
@@ -395,11 +401,10 @@ pipeline {
                     }
 
                     if (currentBuild.currentResult == 'FAILURE') {
-                        DEPLOY_STATUS = "FAILED"
-                        echo "Deployment failed"
+                        NEED_ROLLBACK = true
+                        echo "Deployment failed. Rollback will be triggered."
                     } else {
-                        DEPLOY_STATUS = "SUCCESS"
-                        echo "Deployment succeeded"
+                        echo "Deployment succeeded."
                     }
                 }
             }
@@ -407,21 +412,31 @@ pipeline {
 
         stage('Rollback If Needed') {
             when {
-                expression { DEPLOY_STATUS == "FAILED" }
+                expression { NEED_ROLLBACK == true }
             }
             steps {
-                withCredentials([
-                    usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
-                ]) {
-                    sh '''
-                        "${DEPLOYER_CMD}" --rollback \
-                            -project "${EPIC_NAME}" \
-                            -dc "${EPIC_NAME}" \
-                            -host "${DEPLOYER_HOST}" \
-                            -port "${DEPLOYER_PORT}" \
-                            -user "${DEPLOYER_USER}" \
-                            -pwd "${DEPLOYER_PWD}"
-                    '''
+                script {
+                    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                        withCredentials([
+                            usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
+                        ]) {
+                            sh '''
+                                echo "Rollback started for project: ${EPIC_NAME}"
+
+                                chmod +x "${DEPLOYER_CMD}" || true
+
+                                "${DEPLOYER_CMD}" --rollback \
+                                    -project "${EPIC_NAME}" \
+                                    -dc "${EPIC_NAME}" \
+                                    -host "${DEPLOYER_HOST}" \
+                                    -port "${DEPLOYER_PORT}" \
+                                    -user "${DEPLOYER_USER}" \
+                                    -pwd "${DEPLOYER_PWD}"
+
+                                echo "Rollback completed."
+                            '''
+                        }
+                    }
                 }
             }
         }
@@ -430,7 +445,11 @@ pipeline {
             steps {
                 sh '''
                     cd "${WORKSPACE}"
-                    zip -r build_output.zip build_output
+                    if [ -d build_output ]; then
+                        zip -r build_output.zip build_output
+                    else
+                        echo "build_output directory not found. Skipping zip."
+                    fi
                 '''
             }
         }
