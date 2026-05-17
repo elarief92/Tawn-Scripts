@@ -268,9 +268,7 @@ pipeline {
                     export JAVA_OPTS="-Xms2g -Xmx16g -XX:+UseG1GC"
                     export _JAVA_OPTIONS="-Xms2g -Xmx16g -XX:+UseG1GC"
 
-                    cd "${SAG_HOME}/common/AssetBuildEnvironment/master_build"
-
-                    ANT_ARGS="-Dbuild.output.dir=${BUILD_OUTPUT_DIR} -Dbuild.source.dir=${TEMP_SRC} -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true" "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" 2>&1 | tee "${BUILD_LOG_FILE}"
+                   "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" -Dbuild.output.dir="${BUILD_OUTPUT_DIR}" -Dbuild.source.dir="${TEMP_SRC}" -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true 2>&1 | tee "${BUILD_LOG_FILE}"
                 '''
             }
         }
@@ -549,7 +547,7 @@ def getEnvironmentConfig(envName) {
     config[envName]
 }
 
-def getTargetConfigs(envName, scopeCsv) {
+def getTargetConfigs(envName, SRV_Name) {
     def targetConfigMap = [
         'PREPROD_APP01': [alias: 'PREPROD_APP01', host: '10.7.248.74',  port: '5555'],
         'PREPROD_APP02': [alias: 'PREPROD_APP02', host: '10.7.248.75',  port: '5555'],
@@ -565,7 +563,7 @@ def getTargetConfigs(envName, scopeCsv) {
         PROD: ['PRD_APP01', 'PRD_APP02']
     ]
 
-    def selectedTargets = getSelected(scopeCsv)
+    def selectedTargets = getSelected(SRV_Name)
 
     selectedTargets.each { t ->
         if (!allowedTargetsByEnvironment[envName]?.contains(t)) {
