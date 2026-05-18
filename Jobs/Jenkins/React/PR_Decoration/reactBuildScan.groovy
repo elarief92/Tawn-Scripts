@@ -15,52 +15,47 @@ def call(Map cfg) {
     error("Invalid LOB '${lob}'. Allowed: [DXP, CXP]")
   }
 
-  /*
-   * =========================================================
-   * PR ANALYSIS CONFIG
-   * =========================================================
-   */
-
   boolean isPrAnalysis = cfg.sonar.isPrAnalysis ?: false
 
   String prKey    = cfg.sonar.prKey ?: ''
   String prBranch = cfg.sonar.prBranch ?: ''
-  String prBase   = cfg.sonar.prBase ?: 'DEV'
+  String prBase   = cfg.sonar.prBase ?: branchName
 
-  /*
-   * =========================================================
-   * TARGET CHECKOUT BRANCH
-   * =========================================================
-   */
+  if (isPrAnalysis) {
+    if (!prKey?.trim()) {
+      error("PR analysis selected but PR_KEY is empty")
+    }
 
-  String targetBranch = isPrAnalysis ? prBranch : branchName
+    if (!prBranch?.trim()) {
+      error("PR analysis selected but PR_BRANCH is empty")
+    }
+
+    if (!prBase?.trim()) {
+      error("PR analysis selected but PR_BASE is empty")
+    }
+  }
+
+  String checkoutBranch = isPrAnalysis ? prBranch : branchName
 
   echo """
   =========================================================
   SonarQube Analysis Mode
   ---------------------------------------------------------
-  PR Analysis : ${isPrAnalysis}
-  Checkout Ref: ${targetBranch}
-  PR Key      : ${prKey}
-  PR Branch   : ${prBranch}
-  PR Base     : ${prBase}
+  PR Analysis     : ${isPrAnalysis}
+  Checkout Branch : ${checkoutBranch}
+  Branch Base     : ${branchName}
+  PR Key          : ${prKey}
+  PR Branch       : ${prBranch}
+  PR Base         : ${prBase}
   =========================================================
   """
 
-  /*
-   * =========================================================
-   * SECRET SCAN NODE
-   * =========================================================
-   */
-
   node(secretScanningAgent) {
-
-    stage("Checkout for Secret Scan (${targetBranch})") {
-
+    stage("Checkout for Secret Scan (${checkoutBranch})") {
       deleteDir()
 
       bbs_checkout(
-        branches: [[name: "*/${targetBranch}"]],
+        branches: [[name: "*/${checkoutBranch}"]],
         credentialsId: cfg.bbs.credentialsId,
         id: cfg.bbs.id,
         projectName: cfg.bbs.projectName,
@@ -68,51 +63,14 @@ def call(Map cfg) {
         serverId: cfg.bbs.serverId
       )
     }
-
-    /*
-    stage('Secret Scan - Gitleaks') {
-
-      int result = bat(
-        returnStatus: true,
-        script: """
-          E:\\gitleaks\\gitleaks.exe detect ^
-          --no-git ^
-          --source . ^
-          --report-format json ^
-          --report-path gitleaks-report.json ^
-          --exit-code 1
-        """
-      )
-
-      bat """
-        if not exist gitleaks-report.json (
-          echo {} > gitleaks-report.json
-        )
-      """
-
-      archiveArtifacts artifacts: 'gitleaks-report.json', fingerprint: true
-
-      if (result != 0) {
-        error("Gitleaks failed. Check gitleaks-report.json artifact.")
-      }
-    }
-    */
   }
 
-  /*
-   * =========================================================
-   * BUILD NODE
-   * =========================================================
-   */
-
   node(buildAgent) {
-
-    stage("Checkout for Build (${targetBranch})") {
-
+    stage("Checkout for Build (${checkoutBranch})") {
       deleteDir()
 
       bbs_checkout(
-        branches: [[name: "*/${targetBranch}"]],
+        branches: [[name: "*/${checkoutBranch}"]],
         credentialsId: cfg.bbs.credentialsId,
         id: cfg.bbs.id,
         projectName: cfg.bbs.projectName,
@@ -129,26 +87,15 @@ def call(Map cfg) {
     )
 
     stage('Set Build Name') {
-
       currentBuild.displayName = "${epic} ⇔ ${env.ARTIFACT_VERSION}"
-
-      currentBuild.description =
-        "Artifact: ${env.ARTIFACT_VERSION} | " +
-        "Branch: ${targetBranch} | " +
-        "LOB: ${lob} | " +
-        "Build: #${env.BUILD_NUMBER}"
+      currentBuild.description = "Artifact: ${env.ARTIFACT_VERSION} | Checkout: ${checkoutBranch} | Base: ${branchName} | LOB: ${lob} | Build: #${env.BUILD_NUMBER}"
     }
 
     stage('Install Dependencies + Build + Test') {
-
       def nodeHome = tool 'NodeJS'
 
       env.NODE_HOME = nodeHome
-
-      env.PATH =
-        "${nodeHome};" +
-        "${nodeHome}\\node_modules\\npm\\bin;" +
-        "${env.PATH}"
+      env.PATH = "${nodeHome};${nodeHome}\\node_modules\\npm\\bin;${env.PATH}"
 
       bat "${cfg.node.installCmd}"
 
@@ -167,8 +114,7 @@ def call(Map cfg) {
 
       env.UNIT_TEST_RESULT = "${testResult}"
 
-      junit allowEmptyResults: true,
-            testResults: 'reports/junit.xml'
+      junit allowEmptyResults: true, testResults: 'reports/junit.xml'
 
       stash(
         name: 'coverage-report',
@@ -178,20 +124,12 @@ def call(Map cfg) {
     }
   }
 
-  /*
-   * =========================================================
-   * SONAR NODE
-   * =========================================================
-   */
-
   node(sonarAgent) {
-
-    stage("Checkout for Sonar (${targetBranch})") {
-
+    stage("Checkout for Sonar (${checkoutBranch})") {
       deleteDir()
 
       bbs_checkout(
-        branches: [[name: "*/${targetBranch}"]],
+        branches: [[name: "*/${checkoutBranch}"]],
         credentialsId: cfg.bbs.credentialsId,
         id: cfg.bbs.id,
         projectName: cfg.bbs.projectName,
@@ -199,28 +137,54 @@ def call(Map cfg) {
         serverId: cfg.bbs.serverId
       )
 
+      if (isPrAnalysis) {
+        bat """
+          set PATH=C:\\Program Files\\Git\\cmd;%PATH%
+          where git
+          git --version
+          git fetch --all --prune
+          git checkout -B "${prBranch}" "dh-sales-v3/${prBranch}"
+          git branch -f "${prBase}" "dh-sales-v3/${prBase}"
+          git merge-base HEAD "${prBase}"
+          git branch
+        """
+      }
+
+      bat """
+        echo Checking Sonar source files...
+        echo sonar.sources=${cfg.sonar.sources}
+        echo sonar.inclusions=${cfg.sonar.inclusions}
+        echo sonar.exclusions=${cfg.sonar.exclusions}
+
+        if not exist "${cfg.sonar.sources}" (
+          echo ERROR: sonar.sources path does not exist: ${cfg.sonar.sources}
+          exit /b 1
+        )
+
+        dir "${cfg.sonar.sources}" /s /b
+
+        dir "${cfg.sonar.sources}" /s /b | findstr /R /I "\\.ts\$ \\.tsx\$"
+        if errorlevel 1 (
+          echo ERROR: No .ts or .tsx files found under ${cfg.sonar.sources}
+          exit /b 1
+        )
+      """
+
       unstash 'coverage-report'
     }
 
     stage('SonarQube Analysis') {
-
       def nodeHome    = tool 'NodeJS'
       def scannerHome = tool 'sonar-scanner-cli'
 
       env.NODE_HOME = nodeHome
-
-      env.PATH =
-        "${nodeHome};" +
-        "${nodeHome}\\node_modules\\npm\\bin;" +
-        "${scannerHome}\\bin;" +
-        "${env.PATH}"
+      env.PATH = "${nodeHome};${nodeHome}\\node_modules\\npm\\bin;${scannerHome}\\bin;${env.PATH}"
 
       String sonarKey = "${lob}-${cfg.sonar.projectKey}"
 
       String analysisModeArgs = ""
 
       if (isPrAnalysis) {
-
         echo """
         Running SonarQube PR Analysis:
         PR Key    : ${prKey}
@@ -232,24 +196,23 @@ def call(Map cfg) {
           "-Dsonar.pullrequest.key=${prKey} " +
           "-Dsonar.pullrequest.branch=${prBranch} " +
           "-Dsonar.pullrequest.base=${prBase}"
-
       } else {
+        echo "Running SonarQube Branch Analysis: ${branchName}"
 
-        echo "Running SonarQube Branch Analysis: ${targetBranch}"
-
-        analysisModeArgs =
-          "-Dsonar.branch.name=${targetBranch}"
+        analysisModeArgs = "-Dsonar.branch.name=${branchName}"
       }
 
       withSonarQubeEnv(cfg.sonar.server) {
-
         bat """
           "${scannerHome}\\bin\\sonar-scanner.bat" ^
           -Dsonar.projectKey=${sonarKey} ^
           -Dsonar.projectName=${sonarKey} ^
           -Dsonar.projectVersion=${env.ARTIFACT_VERSION} ^
           -Dsonar.sources=${cfg.sonar.sources} ^
+          -Dsonar.tests=${cfg.sonar.tests} ^
           -Dsonar.inclusions=${cfg.sonar.inclusions} ^
+          -Dsonar.test.inclusions=${cfg.sonar.testInclusions} ^
+          -Dsonar.coverage.exclusions=${cfg.sonar.coverageExclusions} ^
           -Dsonar.typescript.tsconfigPaths=${cfg.sonar.tsconfigPaths} ^
           -Dsonar.javascript.lcov.reportPaths=${cfg.sonar.lcovReportPath} ^
           -Dsonar.sourceEncoding=UTF-8 ^
@@ -262,35 +225,21 @@ def call(Map cfg) {
     }
 
     stage('Quality Gate') {
-
       timeout(time: 1, unit: 'HOURS') {
-
         waitForQualityGate abortPipeline: true
       }
     }
 
     stage('Fail Build If Unit Tests Failed') {
-
       junit 'reports/junit.xml'
     }
   }
 
-  /*
-   * =========================================================
-   * ARCHIVE
-   * =========================================================
-   */
-
   node(buildAgent) {
-
     stage('Archive Artifacts') {
-
       bat 'echo %EPIC% > epic.txt'
 
-      writeFile(
-        file: 'artifact_version.txt',
-        text: env.ARTIFACT_VERSION
-      )
+      writeFile file: 'artifact_version.txt', text: env.ARTIFACT_VERSION
 
       archiveArtifacts(
         artifacts: "${cfg.artifacts.path},artifact_version.txt,epic.txt",

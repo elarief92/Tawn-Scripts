@@ -4,11 +4,11 @@ pipeline {
   agent none
 
   parameters {
-    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number')
+    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number. Example: DEV26-1815')
 
     booleanParam(
       name: 'IS_PR_ANALYSIS',
-      defaultValue: false,
+      defaultValue: true,
       description: 'Enable SonarQube Pull Request analysis'
     )
 
@@ -28,6 +28,7 @@ pipeline {
   environment {
     BRANCH_NAME = 'DEV'
     NODE_TLS_REJECT_UNAUTHORIZED = '0'
+    GIT_SSL_NO_VERIFY = 'true'
   }
 
   stages {
@@ -68,11 +69,20 @@ pipeline {
             sonar: [
               server: 'SonarQube',
               projectKey: 'FE-TRAVEL-INSURANCE-V3',
+              projectName: 'FE-TRAVEL-INSURANCE-V3',
+              projectVersion: 'R21-DXP-v0.0.0-DEV',
+
               sources: 'apps/travel-insurance/src',
-              inclusions: 'apps/travel-insurance/**',
+              tests: 'apps/travel-insurance/src',
+
+              inclusions: 'apps/travel-insurance/src/**/*.ts,apps/travel-insurance/src/**/*.tsx',
+              testInclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx',
+
               tsconfigPaths: 'apps/travel-insurance/tsconfig.json',
               lcovReportPath: 'coverage/lcov.info',
-              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**',
+
+              exclusions: '**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
+              coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/assets/**',
 
               isPrAnalysis: params.IS_PR_ANALYSIS,
               prKey: params.PR_KEY,
