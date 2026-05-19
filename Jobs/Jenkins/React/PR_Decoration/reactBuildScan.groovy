@@ -63,6 +63,72 @@ def call(Map cfg) {
         serverId: cfg.bbs.serverId
       )
     }
+
+    /*
+          stage('Trivy DB Update') {
+        node(buildAgent) {
+          bat """
+            E:\\trivy\\trivy.exe fs --download-db-only .
+          """
+        }
+      }
+
+        stage('SCA - Trivy') {
+          node(buildAgent) {
+            deleteDir()
+            unstash 'src'
+
+            int result = bat(
+              returnStatus: true,
+              script: """
+                E:\\trivy\\trivy.exe fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --skip-db-update --format json --output trivy-report.json --exit-code 1 .
+              """
+            )
+
+            bat """
+              if not exist trivy-report.json (
+                echo {} > trivy-report.json
+              )
+            """
+
+            archiveArtifacts artifacts: 'trivy-report.json', fingerprint: true
+
+            script {
+              def report = readFile('trivy-report.json').trim()
+              if (result != 0) {
+                if (report == '{}' || report == '') {
+                  error("Trivy scan execution failed. Check console log.")
+                } else {
+                  error("Trivy found HIGH/CRITICAL vulnerabilities. Check trivy-report.json artifact.")
+                }
+              }
+            }
+          }
+        }
+      */
+
+          /*
+          stage('Secret Scan - Gitleaks') {
+            int result = bat(
+              returnStatus: true,
+              script: """
+                E:\\gitleaks\\gitleaks.exe detect --no-git --source . --report-format json --report-path gitleaks-report.json --exit-code 1
+              """
+            )
+
+            bat """
+              if not exist gitleaks-report.json (
+                echo {} > gitleaks-report.json
+              )
+            """
+
+            archiveArtifacts artifacts: 'gitleaks-report.json', fingerprint: true
+
+            if (result != 0) {
+              error("Gitleaks failed. Check gitleaks-report.json artifact.")
+            }
+          }
+     */
   }
 
   node(buildAgent) {
