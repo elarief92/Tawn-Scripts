@@ -36,7 +36,7 @@ pipeline {
               packageFile: 'package.json'
             ],
 
-            node: [
+           node: [
               resetCmd: '',
               installCmd: 'npm install --legacy-peer-deps',
               buildCmd: 'npx nx build visit-visa --configuration=development',
@@ -54,6 +54,7 @@ pipeline {
               inclusions: 'apps/visit-visa/**',
               tsconfigPaths: 'apps/visit-visa/tsconfig.json',
               lcovReportPath: 'coverage/lcov.info',
+              testExecutionReportPath: 'reports/junit.xml',
               exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**'
             ]
           )
