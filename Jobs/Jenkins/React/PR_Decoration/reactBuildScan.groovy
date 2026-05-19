@@ -15,7 +15,7 @@ def call(Map cfg) {
     error("Invalid LOB '${lob}'. Allowed: [DXP, CXP]")
   }
 
-  boolean isPrAnalysis = cfg.sonar.isPrAnalysis ?: false
+  boolean isPrAnalysis = branchName.equalsIgnoreCase('DEV') ? (cfg.sonar.isPrAnalysis ?: false) : false
 
   String prKey    = cfg.sonar.prKey ?: ''
   String prBranch = cfg.sonar.prBranch ?: ''
