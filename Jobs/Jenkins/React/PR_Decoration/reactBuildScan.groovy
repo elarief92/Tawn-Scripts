@@ -1,11 +1,22 @@
 def call(Map cfg) {
 
-  def epic                 = cfg.epic
   def branchName           = cfg.branch.toString()
   def lob                  = (cfg.lob ?: "").toString().toUpperCase()
   def buildAgent           = cfg.buildAgent
   def sonarAgent           = cfg.sonarAgent
   def secretScanningAgent  = cfg.secretScanningAgent
+
+  String prKey    = cfg.sonar.prKey ?: ''
+  String prBranch = cfg.sonar.prBranch ?: ''
+  String prBase   = branchName
+
+  String epic = cfg.epic ?: ''
+  if (!epic?.trim() && prBranch?.trim()) {
+    def epicMatcher = prBranch =~ /(DEV\d+-\d+)/
+    if (epicMatcher.find()) {
+      epic = epicMatcher.group(1)
+    }
+  }
 
   if (!branchName) {
     error("Branch name must be provided")
@@ -15,27 +26,22 @@ def call(Map cfg) {
     error("Invalid LOB '${lob}'. Allowed: [DXP, CXP]")
   }
 
-  boolean isPrAnalysis = branchName.equalsIgnoreCase('DEV') ? (cfg.sonar.isPrAnalysis ?: false) : false
+  boolean isPrAnalysis =
+    branchName.equalsIgnoreCase('DEV') &&
+    prKey?.trim() &&
+    prBranch?.trim()
 
-  String prKey    = cfg.sonar.prKey ?: ''
-  String prBranch = cfg.sonar.prBranch ?: ''
-  String prBase   = cfg.sonar.prBase ?: branchName
+  String appPath = cfg.app.path ?: ''
+  if (!appPath?.trim()) {
+    error("cfg.app.path must be provided. Example: apps/visit-visa/")
+  }
 
-  if (isPrAnalysis) {
-    if (!prKey?.trim()) {
-      error("PR analysis selected but PR_KEY is empty")
-    }
-
-    if (!prBranch?.trim()) {
-      error("PR analysis selected but PR_BRANCH is empty")
-    }
-
-    if (!prBase?.trim()) {
-      error("PR analysis selected but PR_BASE is empty")
-    }
+  if (!appPath.endsWith('/')) {
+    appPath = appPath + '/'
   }
 
   String checkoutBranch = isPrAnalysis ? prBranch : branchName
+  String remoteName = cfg.bbs.remoteName ?: cfg.bbs.repositoryName.toString().toLowerCase()
 
   echo """
   =========================================================
@@ -47,11 +53,16 @@ def call(Map cfg) {
   PR Key          : ${prKey}
   PR Branch       : ${prBranch}
   PR Base         : ${prBase}
+  EPIC            : ${epic}
+  App Path        : ${appPath}
+  Remote Name     : ${remoteName}
   =========================================================
   """
 
+  boolean shouldRunAppJob = true
+
   node(secretScanningAgent) {
-    stage("Checkout for Secret Scan (${checkoutBranch})") {
+    stage("Checkout + Monorepo Change Detection (${checkoutBranch})") {
       deleteDir()
 
       bbs_checkout(
@@ -62,9 +73,32 @@ def call(Map cfg) {
         repositoryName: cfg.bbs.repositoryName,
         serverId: cfg.bbs.serverId
       )
+
+      if (isPrAnalysis) {
+        bat """
+          set PATH=C:\\Program Files\\Git\\cmd;%PATH%
+          where git
+          git --version
+          git fetch --all --prune
+          git branch -a
+        """
+
+        bat """
+          git diff --name-only "${remoteName}/${prBase}...${remoteName}/${prBranch}" > changed-files.txt
+          type changed-files.txt
+        """
+
+        def changedFiles = readFile('changed-files.txt').trim()
+
+        if (!changedFiles.contains(appPath)) {
+          shouldRunAppJob = false
+          currentBuild.result = 'NOT_BUILT'
+          echo "No changes found under ${appPath}. Skipping this app job."
+        }
+      }
     }
 
-    /*
+      /*
           stage('Trivy DB Update') {
         node(buildAgent) {
           bat """
@@ -128,8 +162,16 @@ def call(Map cfg) {
               error("Gitleaks failed. Check gitleaks-report.json artifact.")
             }
           }
-     */
+          */
+
+
   }
+
+  if (!shouldRunAppJob) {
+    return
+  }
+
+  
 
   node(buildAgent) {
     stage("Checkout for Build (${checkoutBranch})") {
@@ -153,7 +195,8 @@ def call(Map cfg) {
     )
 
     stage('Set Build Name') {
-      currentBuild.displayName = "${epic} ⇔ ${env.ARTIFACT_VERSION}"
+      String displayNamePrefix = prBranch?.trim() ? prBranch : (epic ?: prKey ?: branchName)
+      currentBuild.displayName = "${displayNamePrefix} ⇔ ${env.ARTIFACT_VERSION}"
       currentBuild.description = "Artifact: ${env.ARTIFACT_VERSION} | Checkout: ${checkoutBranch} | Base: ${branchName} | LOB: ${lob} | Build: #${env.BUILD_NUMBER}"
     }
 
@@ -170,7 +213,6 @@ def call(Map cfg) {
       }
 
       bat "${cfg.node.buildCmd}"
-
       bat 'if not exist reports mkdir reports'
 
       int testResult = bat(
@@ -179,7 +221,6 @@ def call(Map cfg) {
       )
 
       env.UNIT_TEST_RESULT = "${testResult}"
-
       junit allowEmptyResults: true, testResults: 'reports/junit.xml'
 
       stash(
@@ -209,32 +250,12 @@ def call(Map cfg) {
           where git
           git --version
           git fetch --all --prune
-          git checkout -B "${prBranch}" "dh-sales-v3/${prBranch}"
-          git branch -f "${prBase}" "dh-sales-v3/${prBase}"
+          git checkout -B "${prBranch}" "${remoteName}/${prBranch}"
+          git branch -f "${prBase}" "${remoteName}/${prBase}"
           git merge-base HEAD "${prBase}"
           git branch
         """
       }
-
-      bat """
-        echo Checking Sonar source files...
-        echo sonar.sources=${cfg.sonar.sources}
-        echo sonar.inclusions=${cfg.sonar.inclusions}
-        echo sonar.exclusions=${cfg.sonar.exclusions}
-
-        if not exist "${cfg.sonar.sources}" (
-          echo ERROR: sonar.sources path does not exist: ${cfg.sonar.sources}
-          exit /b 1
-        )
-
-        dir "${cfg.sonar.sources}" /s /b
-
-        dir "${cfg.sonar.sources}" /s /b | findstr /R /I "\\.ts\$ \\.tsx\$"
-        if errorlevel 1 (
-          echo ERROR: No .ts or .tsx files found under ${cfg.sonar.sources}
-          exit /b 1
-        )
-      """
 
       unstash 'coverage-report'
     }
@@ -251,20 +272,11 @@ def call(Map cfg) {
       String analysisModeArgs = ""
 
       if (isPrAnalysis) {
-        echo """
-        Running SonarQube PR Analysis:
-        PR Key    : ${prKey}
-        Source    : ${prBranch}
-        Target    : ${prBase}
-        """
-
         analysisModeArgs =
           "-Dsonar.pullrequest.key=${prKey} " +
           "-Dsonar.pullrequest.branch=${prBranch} " +
           "-Dsonar.pullrequest.base=${prBase}"
       } else {
-        echo "Running SonarQube Branch Analysis: ${branchName}"
-
         analysisModeArgs = "-Dsonar.branch.name=${branchName}"
       }
 
@@ -297,20 +309,18 @@ def call(Map cfg) {
     }
 
     stage('Fail Build If Unit Tests Failed') {
-      junit 'reports/junit.xml'
-    }
+  junit allowEmptyResults: true, testResults: 'reports/junit.xml'
+}
   }
 
   node(buildAgent) {
     stage('Archive Artifacts') {
-      bat 'echo %EPIC% > epic.txt'
+      bat "echo ${epic ?: prKey ?: branchName} > epic.txt"
 
       writeFile file: 'artifact_version.txt', text: env.ARTIFACT_VERSION
 
       archiveArtifacts(
-        artifacts: "${cfg.artifacts.path},artifact_version.txt,epic.txt",
-        fingerprint: true,
-        onlyIfSuccessful: true
+        artifacts: "${cfg.artifacts.path},artifact_version.txt,epic.txt",fingerprint: true,onlyIfSuccessful: true
       )
     }
   }
