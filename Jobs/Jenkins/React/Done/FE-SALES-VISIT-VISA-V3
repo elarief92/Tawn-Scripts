@@ -55,6 +55,7 @@ pipeline {
               tsconfigPaths: 'apps/visit-visa/tsconfig.json',
               lcovReportPath: 'coverage/lcov.info',
               testExecutionReportPath: 'reports/junit.xml',
+              cpdExclusions: 'apps/visit-visa/src/app/Components/Kyc/data.ts',
               exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**'
             ]
           )

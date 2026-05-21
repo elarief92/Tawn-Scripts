@@ -83,6 +83,7 @@ pipeline {
 
               exclusions: '**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
               coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/assets/**',
+              cpdExclusions: 'apps/visit-visa/src/app/Components/Kyc/data.ts',
 
               pullRequestId: env.PR_ID ?: params.PR_ID,
               sourceBranch: env.PR_SOURCE_BRANCH ?: params.PR_SOURCE_BRANCH
