@@ -4,16 +4,20 @@ pipeline {
   agent none
 
   parameters {
-    string(name: 'EPIC', defaultValue: '', description: 'Optional. If empty, it will be extracted from PR_BRANCH. Example: DEV26-1815')
+    string(
+      name: 'EPIC',
+      defaultValue: '',
+      description: 'Optional. If empty, it will be extracted from PR_SOURCE_BRANCH. Example: DEV26-1815'
+    )
 
     string(
-      name: 'PR_KEY',
+      name: 'PR_ID',
       defaultValue: '',
       description: 'Bitbucket Pull Request ID. Filled automatically by Generic Webhook Trigger'
     )
 
     string(
-      name: 'PR_BRANCH',
+      name: 'PR_SOURCE_BRANCH',
       defaultValue: '',
       description: 'Feature/source branch. Filled automatically by Generic Webhook Trigger'
     )
@@ -63,10 +67,10 @@ pipeline {
             ],
 
             sonar: [
-              server: 'SonarQube',
               projectKey: 'FE-SALES-VISIT-VISA-V3',
-              projectName: 'FE-SALES-VISIT-VISA-V3',
-              projectVersion: 'R21-DXP-v0.0.0-DEV',
+
+              mainGate: 'Quality Gate-Tawuniya',
+              prGate: 'Refactor Gate',
 
               sources: 'apps/visit-visa/src',
               tests: 'apps/visit-visa/src',
@@ -80,8 +84,8 @@ pipeline {
               exclusions: '**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
               coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/assets/**',
 
-              prKey: env.PR_KEY ?: params.PR_KEY,
-              prBranch: env.PR_BRANCH ?: params.PR_BRANCH
+              pullRequestId: env.PR_ID ?: params.PR_ID,
+              sourceBranch: env.PR_SOURCE_BRANCH ?: params.PR_SOURCE_BRANCH
             ]
           )
         }
