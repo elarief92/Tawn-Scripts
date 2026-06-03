@@ -340,6 +340,7 @@ def call(Map cfg) {
               -Dsonar.sourceEncoding=UTF-8 ^
               ${analysisModeArgs} ^
               -Dsonar.exclusions=${cfg.sonar.exclusions} ^
+              -Dsonar.cpd.exclusions=${cfg.sonar.cpdExclusions ?: ''} ^
               -Dsonar.scanner.skip.ssl.verification=true ^
               -Dsonar.nodejs.executable="${nodeHome}\\node.exe"
             """

@@ -4,24 +4,22 @@ pipeline {
   agent none
 
   parameters {
-    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number. Example: DEV26-1815')
-
-    booleanParam(
-      name: 'IS_PR_ANALYSIS',
-      defaultValue: true,
-      description: 'Enable SonarQube Pull Request analysis'
+    string(
+      name: 'EPIC',
+      defaultValue: '',
+      description: 'Optional. If empty, it will be extracted from PR_SOURCE_BRANCH. Example: DEV11-1111'
     )
 
     string(
-      name: 'PR_KEY',
+      name: 'PR_ID',
       defaultValue: '',
-      description: 'Bitbucket Pull Request ID. Example: 6651'
+      description: 'Bitbucket Pull Request ID. Filled automatically by Generic Webhook Trigger'
     )
 
     string(
-      name: 'PR_BRANCH',
+      name: 'PR_SOURCE_BRANCH',
       defaultValue: '',
-      description: 'Feature/source branch. Example: feature/DEV26-1815-travel-sonarQube'
+      description: 'Feature/source branch. Filled automatically by Generic Webhook Trigger'
     )
   }
 
@@ -48,10 +46,12 @@ pipeline {
               id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
               projectName: 'DXP',
               repositoryName: 'DH-Sales-V3',
+              remoteName: 'dh-sales-v3',
               serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
             ],
 
             app: [
+              path: 'apps/travel-insurance/',
               packageFile: 'package.json'
             ],
 
@@ -59,7 +59,7 @@ pipeline {
               resetCmd: '',
               installCmd: 'set NODE_OPTIONS=--max-old-space-size=8192 && set ESBUILD_MAX_HEAP_SIZE=8192 && npm install --legacy-peer-deps',
               buildCmd: 'npx nx build travel-insurance --configuration=development',
-              testCoverageCmd: 'npx vitest run --coverage --config apps/travel-insurance/vitest.config.mts --dir apps/travel-insurance --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
+              testCoverageCmd: 'npx vitest run --coverage --passWithNoTests --config apps/travel-insurance/vitest.config.mts --dir apps/travel-insurance --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 
             artifacts: [
@@ -67,10 +67,10 @@ pipeline {
             ],
 
             sonar: [
-              server: 'SonarQube',
               projectKey: 'FE-TRAVEL-INSURANCE-V3',
-              projectName: 'FE-TRAVEL-INSURANCE-V3',
-              projectVersion: 'R21-DXP-v0.0.0-DEV',
+
+              mainGate: 'Quality Gate-Tawuniya',
+              prGate: 'Refactor Gate',
 
               sources: 'apps/travel-insurance/src',
               tests: 'apps/travel-insurance/src',
@@ -83,11 +83,10 @@ pipeline {
 
               exclusions: '**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
               coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/assets/**',
+              cpdExclusions: '',
 
-              isPrAnalysis: params.IS_PR_ANALYSIS,
-              prKey: params.PR_KEY,
-              prBranch: params.PR_BRANCH,
-              prBase: env.BRANCH_NAME
+              pullRequestId: env.PR_ID ?: params.PR_ID,
+              sourceBranch: env.PR_SOURCE_BRANCH ?: params.PR_SOURCE_BRANCH
             ]
           )
         }
