@@ -1,0 +1,90 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+  agent none
+
+  parameters {
+    string(
+      name: 'EPIC',
+      defaultValue: '',
+      description: 'Use a Valid Jira Epic Number'
+    )
+
+    string(
+      name: 'PR_ID',
+      defaultValue: '',
+      description: 'Optional. Bitbucket Pull Request ID for SonarQube PR analysis'
+    )
+
+    string(
+      name: 'PR_SOURCE_BRANCH',
+      defaultValue: '',
+      description: 'Optional. PR source branch. Example: feature/DEV11-1111'
+    )
+  }
+
+  environment {
+    BRANCH_NAME = 'DEV'
+  }
+
+  stages {
+    stage('Build + Scan') {
+      steps {
+        script {
+
+          def branchName = env.BRANCH_NAME.toString()
+          def envLower   = branchName.toLowerCase()
+          def appName    = 'workshopportal-api'
+
+          bffBuildScan([
+            epic: params.EPIC,
+            branch: branchName,
+            lob: 'DXP',
+            appName: appName,
+            buildAgent: 'built-in',
+            sonarAgent: 'SonarQube',
+
+            bbs: [
+              credentialsId: 'Admin_Bitbucket',
+              id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+              projectName: 'DXP',
+              repositoryName: 'BFF-WEB',
+              serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6',
+              remoteName: 'bff-web'
+            ],
+
+            mvnCmd: "mvn clean verify -Denvironment=${envLower} -DapplicationName=${appName} -DlogDirectory=\"/u01/Logs\"",
+
+            sonar: [
+              server: 'SonarQube',
+              hostUrl: 'https://sonarqube.tawuniya.com',
+              apiTokenCredentialsId: 'jenkins-sonar-api',
+
+              mainGate: 'Quality Gate-Tawuniya',
+              prGate: 'Refactor Gate',
+
+              projectKey: 'BFF-WEB',
+
+              prKey: params.PR_ID,
+              prBranch: params.PR_SOURCE_BRANCH,
+
+              sources: 'src/main/java',
+              tests: 'src/test/java',
+              binaries: 'target/classes',
+              junitReports: 'target/surefire-reports',
+              coverageReport: 'target/site/jacoco/jacoco.xml',
+
+              coverageExclusions: '',
+              exclusions: '',
+              cpdExclusions: ''
+            ],
+
+            artifacts: [
+              path: 'target/*.war,epic.txt,artifact_version.txt'
+            ]
+          ])
+        }
+      }
+    }
+  }
+}
