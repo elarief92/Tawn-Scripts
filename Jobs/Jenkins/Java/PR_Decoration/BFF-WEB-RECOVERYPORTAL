@@ -15,7 +15,7 @@ pipeline {
     string(
       name: 'PR_SOURCE_BRANCH',
       defaultValue: '',
-      description: 'Optional. PR source branch. Example: feature/DEV11-1111'
+      description: 'Optional. PR source branch. Example: feature/DEV11-1111-recoveryportal'
     )
   }
 
