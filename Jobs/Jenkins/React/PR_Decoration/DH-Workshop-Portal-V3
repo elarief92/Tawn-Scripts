@@ -7,7 +7,7 @@ pipeline {
     string(
       name: 'EPIC',
       defaultValue: '',
-      description: 'Optional. If empty, it will be extracted from PR_SOURCE_BRANCH. Example: DEV11-1111'
+      description: 'Use a Valid Jira Epic Number'
     )
 
     string(
@@ -58,7 +58,7 @@ pipeline {
             node: [
               resetCmd: '',
               installCmd: 'npm install --legacy-peer-deps',
-              buildCmd: 'npm run build:qc',
+              buildCmd: 'npm run build',
               testCoverageCmd: 'npx vitest run --coverage --passWithNoTests --coverage.reporter=lcov --coverage.reporter=text --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 

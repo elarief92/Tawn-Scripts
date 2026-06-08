@@ -1,0 +1,146 @@
+pipeline {
+    agent none
+
+    environment {
+        BUILD_JOB_NAME = 'YOUR-BUILD-JOB-NAME'
+        CONTROLLER     = 'localhost:10019'
+    }
+
+    stages {
+        stage('Deploy Sequentially') {
+            steps {
+                script {
+                    def servers = [
+                        [
+                            label      : 'hqv-buss-sapp03',
+                            serverGroup: 'oldapp-server-group'
+                        ],
+                        [
+                            label      : 'hqv-buss-sapp04',
+                            serverGroup: 'oldapp-server-group'
+                        ]
+                    ]
+
+                    for (srv in servers) {
+
+                        node(srv.label) {
+
+                            cleanWs()
+
+                            stage("Get WAR Artifact - ${srv.label}") {
+                                copyArtifacts(
+                                    projectName: "${BUILD_JOB_NAME}",
+                                    selector: upstream(),
+                                    filter: '**/*.war',
+                                    flatten: true,
+                                    fingerprintArtifacts: true
+                                )
+
+                                bat '''
+                                @echo off
+                                echo WAR artifact copied:
+                                dir *.war
+                                '''
+                            }
+
+                            withCredentials([
+                                usernamePassword(
+                                    credentialsId: 'JBOSS_Cred',
+                                    usernameVariable: 'JBOSS_USER',
+                                    passwordVariable: 'JBOSS_PASS'
+                                )
+                            ]) {
+
+                                stage("Stop - ${srv.label}") {
+                                    bat """
+                                    %JBOSS% -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/server-group=${srv.serverGroup}:stop-servers"
+                                    """
+                                }
+
+                                stage("Wait Stopped - ${srv.label}") {
+                                    timeout(time: 10, unit: 'MINUTES') {
+                                        bat '''
+                                        @echo off
+                                        SET IS_STOPPED=NO
+
+                                        :loop
+                                        ping 127.0.0.1 -n 6 > nul
+
+                                        for /f "tokens=* delims=" %%a in ('checkJboss.bat') do (
+                                            echo %%a
+                                            IF "%%a"=="status=STOPPED" SET IS_STOPPED=YES
+                                        )
+
+                                        IF "%IS_STOPPED%"=="NO" goto loop
+                                        '''
+                                    }
+                                }
+
+                                stage("Undeploy / Deploy WAR - ${srv.label}") {
+                                    script {
+                                        def warsOutput = powershell(
+                                            returnStdout: true,
+                                            script: '(Get-ChildItem -Filter *.war | Select-Object -ExpandProperty Name)'
+                                        ).trim()
+
+                                        if (!warsOutput) {
+                                            error "No WAR files found in workspace on ${srv.label}"
+                                        }
+
+                                        def wars = warsOutput.split("\\r?\\n")
+
+                                        for (warFile in wars) {
+                                            echo "Deploying ${warFile} on ${srv.label} using server group ${srv.serverGroup}"
+
+                                            bat """
+                                            %JBOSS% -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="undeploy ${warFile} --server-groups=${srv.serverGroup}" || exit /b 0
+                                            %JBOSS% -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="deploy ${warFile} --server-groups=${srv.serverGroup} --force"
+                                            """
+                                        }
+                                    }
+                                }
+
+                                stage("Clear Cache - ${srv.label}") {
+                                    bat '''
+                                    rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-one\\data" 2>NUL
+                                    rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-one\\tmp" 2>NUL
+                                    rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-one\\log" 2>NUL
+
+                                    rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-two\\data" 2>NUL
+                                    rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-two\\tmp" 2>NUL
+                                    rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-two\\log" 2>NUL
+                                    '''
+                                }
+
+                                stage("Start - ${srv.label}") {
+                                    bat """
+                                    %JBOSS% -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/server-group=${srv.serverGroup}:start-servers"
+                                    """
+                                }
+
+                                stage("Wait Started - ${srv.label}") {
+                                    timeout(time: 15, unit: 'MINUTES') {
+                                        bat '''
+                                        @echo off
+                                        SET IS_STARTED=NO
+
+                                        :loop
+                                        ping 127.0.0.1 -n 6 > nul
+
+                                        for /f "tokens=* delims=" %%a in ('checkJboss.bat') do (
+                                            echo %%a
+                                            IF "%%a"=="status=STARTED" SET IS_STARTED=YES
+                                        )
+
+                                        IF "%IS_STARTED%"=="NO" goto loop
+                                        '''
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
