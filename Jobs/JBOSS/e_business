@@ -2,8 +2,8 @@ pipeline {
     agent none
 
     environment {
-        BUILD_JOB_NAME = 'YOUR-BUILD-JOB-NAME'
-        CONTROLLER     = 'localhost:10019'
+        BUILD_JOB_NAME = 'E Bus/War Prod Compile/WorkshopPortal'
+        CONTROLLER     = 'localhost:10010'
     }
 
     stages {
@@ -30,7 +30,7 @@ pipeline {
                             stage("Get WAR Artifact - ${srv.label}") {
                                 copyArtifacts(
                                     projectName: "${BUILD_JOB_NAME}",
-                                    selector: upstream(),
+                                    selector: lastSuccessful(),
                                     filter: '**/*.war',
                                     flatten: true,
                                     fingerprintArtifacts: true
