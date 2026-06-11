@@ -1,0 +1,95 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+  agent none
+
+  parameters {
+    string(
+      name: 'EPIC',
+      defaultValue: '',
+      description: 'Use a Valid Jira Epic Number'
+    )
+
+    string(
+      name: 'PR_ID',
+      defaultValue: '',
+      description: 'Bitbucket Pull Request ID. Filled automatically by Generic Webhook Trigger'
+    )
+
+    string(
+      name: 'PR_SOURCE_BRANCH',
+      defaultValue: '',
+      description: 'Feature/source branch. Filled automatically by Generic Webhook Trigger'
+    )
+  }
+
+  environment {
+    BRANCH_NAME = 'DEV'
+    NODE_TLS_REJECT_UNAUTHORIZED = '0'
+    GIT_SSL_NO_VERIFY = 'true'
+  }
+
+  stages {
+    stage('Build + Scan') {
+      steps {
+        script {
+          reactBuildScan(
+            epic: params.EPIC,
+            branch: env.BRANCH_NAME,
+            lob: 'DXP',
+            buildAgent: 'built-in',
+            secretScanningAgent: 'built-in',
+            sonarAgent: 'SonarQube',
+
+            bbs: [
+              credentialsId: 'Admin_Bitbucket',
+              id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+              projectName: 'DXP',
+              repositoryName: 'DH-Sales-V3',
+              remoteName: 'dh-sales-v3',
+              serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+            ],
+
+            app: [
+              path: 'apps/acceptance-form/',
+              packageFile: 'package.json'
+            ],
+
+            node: [
+              installCmd: 'npm install --legacy-peer-deps',
+              buildCmd: 'npm run acceptance-form:build:qa',
+              testCoverageCmd: 'npx vitest run --coverage --passWithNoTests --config apps/acceptance-form/vitest.config.mts --dir apps/acceptance-form --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
+            ],
+
+            artifacts: [
+              path: 'dist/apps/acceptance-form/**'
+            ],
+
+            sonar: [
+              projectKey: 'FE-Acceptance-Form-V3',
+
+              mainGate: 'Quality Gate-Tawuniya',
+              prGate: 'Refactor Gate',
+
+              sources: 'apps/acceptance-form/src',
+              tests: 'apps/acceptance-form/src',
+
+              inclusions: 'apps/acceptance-form/src/**/*.ts,apps/acceptance-form/src/**/*.tsx',
+              testInclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx',
+
+              tsconfigPaths: 'apps/acceptance-form/tsconfig.json',
+              lcovReportPath: 'coverage/lcov.info',
+
+              exclusions: '**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
+              coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/assets/**',
+              cpdExclusions: '',
+
+              pullRequestId: env.PR_ID ?: params.PR_ID,
+              sourceBranch: env.PR_SOURCE_BRANCH ?: params.PR_SOURCE_BRANCH
+            ]
+          )
+        }
+      }
+    }
+  }
+}
