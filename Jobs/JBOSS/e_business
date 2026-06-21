@@ -12,11 +12,11 @@ pipeline {
                 script {
                     def servers = [
                         [
-                            label      : 'hqv-buss-sapp03',
+                            label      : 'DRV-BUSS-SAPP03',
                             serverGroup: 'oldapp-server-group'
                         ],
                         [
-                            label      : 'hqv-buss-sapp04',
+                            label      : 'DRV-BUSS-SAPP04',
                             serverGroup: 'oldapp-server-group'
                         ]
                     ]

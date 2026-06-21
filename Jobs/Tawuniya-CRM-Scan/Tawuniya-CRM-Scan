@@ -1,0 +1,101 @@
+pipeline {
+    agent none
+
+    parameters {
+        choice(
+            name: 'BRANCH_NAME',
+            choices: ['DEV', 'QC', 'UAT', 'PROD'],
+            description: 'Select the branch to scan'
+        )
+
+        string(
+            name: 'Project_Version',
+            defaultValue: '1.0.0',
+            description: 'Enter the version for this analysis'
+        )
+    }
+
+    stages {
+        stage('Set Build Name') {
+            agent { label 'CRM-SQL-UAT' }
+
+            steps {
+                script {
+                    currentBuild.displayName = "#${BUILD_NUMBER}-${params.BRANCH_NAME}"
+                }
+            }
+        }
+
+        stage('Checkout SCM') {
+            agent { label 'CRM-SQL-UAT' }
+
+            steps {
+                cleanWs()
+
+                script {
+                    env.PATH = "C:\\Program Files\\Git\\cmd;C:\\Program Files\\Git\\bin;${env.PATH}"
+
+                    bat 'git --version'
+                    bat 'git config --global http.sslVerify false'
+
+                    git(
+                        credentialsId: 'Admin_Bitbucket',
+                        url: 'https://bitbucket.tawn.com/scm/mscrm/tawuniya-crm.git',
+                        branch: "${params.BRANCH_NAME}"
+                    )
+                }
+            }
+        }
+
+        stage('Sonar Begin + Build + Sonar End') {
+            agent { label 'CRM-SQL-UAT' }
+
+            environment {
+                SONAR_USER_HOME = 'E:\\.sonar_cache'
+                SONAR_MSBUILD   = 'E:\\$tools\\SonarScannerMSBuild\\SonarScanner.MSBuild.exe'
+                MSBUILD_EXE     = 'C:\\Program Files (x86)\\MSBuild\\14.0\\Bin\\MSBuild.exe'
+                SOLUTION_FILE   = 'Tawuniya.Crm.sln'
+            }
+
+            steps {
+                script {
+                    withSonarQubeEnv('SonarQube') {
+                        bat """
+                            "%SONAR_MSBUILD%" begin ^
+                            /key:"Tawuniya-CRM" ^
+                            /name:"Tawuniya-CRM" ^
+                            /version:"${params.Project_Version}-${env.BUILD_NUMBER}" ^
+                            /d:sonar.branch.name="${params.BRANCH_NAME}" ^
+                            /d:sonar.sourceEncoding=UTF-8 ^
+                            /d:sonar.tsql.file.suffixes=.sql,.tsql ^
+                            /d:sonar.plsql.file.suffixes=.pks,.pkb ^
+                            /d:sonar.plsqlopen.file.suffixes=.pkg,.trg,.vw,.fnc,.prc ^
+                            /d:sonar.scanner.skip.ssl.verification=true ^
+                            /d:sonar.scanner.skipJreProvisioning=true
+                        """
+
+                        bat '"%MSBUILD_EXE%" "%SOLUTION_FILE%" /t:Rebuild /p:Configuration=Release /p:RestorePackages=true'
+
+                        bat '"%SONAR_MSBUILD%" end'
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            agent { label 'SonarQube' }
+
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Scan completed for ${params.BRANCH_NAME}"
+        }
+    }
+}
