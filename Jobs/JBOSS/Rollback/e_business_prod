@@ -1,0 +1,332 @@
+pipeline {
+    agent none
+
+    environment {
+        CONTROLLER   = 'localhost:10019'
+        JBOSS        = 'E:\\EAP-6.4.0\\bin\\jboss-cli.bat'
+        JBOSS_HOME_2 = 'E:\\EAP-6.4.0'
+
+        DR_ROLLBACK_JOB = 'E Bus/Rollback_Prod-DR/Rollback_DR'
+    }
+
+    stages {
+        stage('Validate Parameters') {
+            steps {
+                script {
+                    if (!params.BUILD_JOB_NAME?.trim()) {
+                        error "BUILD_JOB_NAME is required"
+                    }
+
+                    if (!params.SOURCE_BUILD_NUMBER?.trim()) {
+                        error "SOURCE_BUILD_NUMBER is required"
+                    }
+
+                    echo "Rollback PROD source job: ${params.BUILD_JOB_NAME}"
+                    echo "Rollback PROD source build number: ${params.SOURCE_BUILD_NUMBER}"
+                }
+            }
+        }
+
+        stage('Set Display Name') {
+            steps {
+                script {
+                    currentBuild.displayName = "Roll back for ${DR_ROLLBACK_JOB} - Build Num #${params.SOURCE_BUILD_NUMBER}"
+                    currentBuild.description = "${params.BUILD_JOB_NAME} #${params.SOURCE_BUILD_NUMBER}"
+                }
+            }
+        }
+
+        stage('Rollback PROD Sequentially') {
+            steps {
+                script {
+                    def servers = [
+                        [
+                            label      : 'DRV-BUSS-SAPP03',
+                            serverGroup: 'oldapp-server-group',
+                            java8      : 'C:\\Program Files\\Java\\jdk1.8.0_471',
+                            hostName   : 'master',
+                            appServers : ['oldapp-server-one', 'oldapp-server-two']
+                        ]
+                    ]
+
+                    rollbackToServers(servers)
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            build job: "${DR_ROLLBACK_JOB}",
+                parameters: [
+                    string(name: 'BUILD_JOB_NAME', value: "${params.BUILD_JOB_NAME}"),
+                    string(name: 'SOURCE_BUILD_NUMBER', value: "${params.SOURCE_BUILD_NUMBER}")
+                ],
+                wait: false
+        }
+    }
+}
+
+def rollbackToServers(servers) {
+    for (srv in servers) {
+        stage("Rollback PROD on Server ${srv.label}") {
+            node(srv.label) {
+                cleanWs()
+
+                stage("Get Rollback WAR Artifact") {
+                    copyArtifacts(
+                        projectName: "${params.BUILD_JOB_NAME}",
+                        selector: specific("${params.SOURCE_BUILD_NUMBER}"),
+                        filter: '**/*.war',
+                        flatten: true,
+                        fingerprintArtifacts: true
+                    )
+
+                    bat '''
+                    @echo off
+                    echo Rollback WAR artifact copied:
+                    dir *.war
+                    '''
+                }
+
+                deployRollbackWar(srv)
+            }
+        }
+    }
+}
+
+def deployRollbackWar(srv) {
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'JBOSS_Cred',
+            usernameVariable: 'JBOSS_USER',
+            passwordVariable: 'JBOSS_PASS'
+        )
+    ]) {
+
+        stage("Stop Server Group") {
+            bat """
+            @echo off
+            set NOPAUSE=true
+            set JAVA_HOME=${srv.java8}
+            set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+            call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/server-group=${srv.serverGroup}:stop-servers"
+            IF ERRORLEVEL 1 exit /b 1
+            """
+        }
+
+        stage("Wait Stopped") {
+            for (serverName in srv.appServers) {
+                echo "Waiting until ${serverName} is STOPPED..."
+
+                timeout(time: 15, unit: 'MINUTES') {
+                    bat """
+                    @echo off
+                    setlocal
+                    set NOPAUSE=true
+                    set JAVA_HOME=${srv.java8}
+                    set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                    :loop
+                    ping 127.0.0.1 -n 6 > nul
+
+                    call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/host=${srv.hostName}/server-config=${serverName}:read-resource(include-runtime=true)" > status.txt 2>&1
+
+                    type status.txt
+
+                    findstr /i /c:"\\"status\\" => \\"STOPPED\\"" status.txt > nul
+                    IF ERRORLEVEL 1 goto loop
+
+                    echo ${serverName} is STOPPED
+                    endlocal
+                    """
+                }
+            }
+        }
+
+        stage("Undeploy / Deploy Rollback WAR") {
+            def warsOutput = powershell(
+                returnStdout: true,
+                script: '(Get-ChildItem -Filter *.war | Select-Object -ExpandProperty Name)'
+            ).trim()
+
+            if (!warsOutput) {
+                error "No WAR files found in workspace on ${srv.label}"
+            }
+
+            def wars = warsOutput.split("\\r?\\n")
+
+            bat """
+            @echo off
+            set NOPAUSE=true
+            set JAVA_HOME=${srv.java8}
+            set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+            call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="ls deployment" > deployed-wars.txt
+            IF ERRORLEVEL 1 exit /b 1
+            """
+
+            for (warFile in wars) {
+                def exists = powershell(
+                    returnStdout: true,
+                    script: """
+                    \$war = '${warFile}'
+                    \$deployments = Get-Content deployed-wars.txt
+
+                    if (\$deployments -contains \$war) {
+                        Write-Output 'YES'
+                    } else {
+                        Write-Output 'NO'
+                    }
+                    """
+                ).trim()
+
+                if (exists == 'YES') {
+                    echo "${warFile} exists. Undeploying current version first..."
+
+                    bat """
+                    @echo off
+                    set NOPAUSE=true
+                    set JAVA_HOME=${srv.java8}
+                    set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                    call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="undeploy ${warFile} --server-groups=${srv.serverGroup}"
+                    IF ERRORLEVEL 1 exit /b 1
+                    """
+                } else {
+                    echo "${warFile} does not exist. Deploying rollback WAR as first deployment."
+                }
+
+                bat """
+                @echo off
+                set NOPAUSE=true
+                set JAVA_HOME=${srv.java8}
+                set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="deploy ${warFile} --server-groups=${srv.serverGroup}"
+                IF ERRORLEVEL 1 exit /b 1
+                """
+            }
+        }
+
+        stage("Verify Rollback Deployment Config") {
+            def warsOutput = powershell(
+                returnStdout: true,
+                script: '(Get-ChildItem -Filter *.war | Select-Object -ExpandProperty Name)'
+            ).trim()
+
+            if (!warsOutput) {
+                error "No WAR files found in workspace on ${srv.label}"
+            }
+
+            def wars = warsOutput.split("\\r?\\n")
+
+            for (warFile in wars) {
+                bat """
+                @echo off
+                set NOPAUSE=true
+                set JAVA_HOME=${srv.java8}
+                set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="deployment-info --name=${warFile}"
+                IF ERRORLEVEL 1 exit /b 1
+                """
+            }
+        }
+
+        stage("Clear Cache") {
+            bat '''
+            @echo off
+            set NOPAUSE=true
+
+            rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-one\\data" 2>NUL
+            rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-one\\tmp" 2>NUL
+
+            rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-two\\data" 2>NUL
+            rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-two\\tmp" 2>NUL
+            '''
+        }
+
+        stage("Start Server Group") {
+            bat """
+            @echo off
+            set NOPAUSE=true
+            set JAVA_HOME=${srv.java8}
+            set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+            call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/server-group=${srv.serverGroup}:start-servers"
+            IF ERRORLEVEL 1 exit /b 1
+            """
+        }
+
+        stage("Wait Runtime Running") {
+            for (serverName in srv.appServers) {
+                echo "Waiting until ${serverName} runtime is running..."
+
+                timeout(time: 30, unit: 'MINUTES') {
+                    bat """
+                    @echo off
+                    setlocal
+                    set NOPAUSE=true
+                    set JAVA_HOME=${srv.java8}
+                    set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                    :loop
+                    ping 127.0.0.1 -n 6 > nul
+
+                    call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/host=${srv.hostName}/server=${serverName}:read-resource(include-runtime=true)" > runtime-status.txt 2>&1
+
+                    type runtime-status.txt
+
+                    findstr /i /c:"\\"server-state\\" => \\"running\\"" runtime-status.txt > nul
+                    IF ERRORLEVEL 1 goto loop
+
+                    echo ${serverName} runtime is running
+                    endlocal
+                    """
+                }
+            }
+        }
+
+        stage("Verify Rollback Runtime Deployment") {
+            def warsOutput = powershell(
+                returnStdout: true,
+                script: '(Get-ChildItem -Filter *.war | Select-Object -ExpandProperty Name)'
+            ).trim()
+
+            if (!warsOutput) {
+                error "No WAR files found in workspace on ${srv.label}"
+            }
+
+            def wars = warsOutput.split("\\r?\\n")
+
+            for (serverName in srv.appServers) {
+                for (warFile in wars) {
+                    echo "Verifying rollback ${warFile} on ${serverName}..."
+
+                    bat """
+                    @echo off
+                    setlocal
+                    set NOPAUSE=true
+                    set JAVA_HOME=${srv.java8}
+                    set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                    call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/host=${srv.hostName}/server=${serverName}/deployment=${warFile}:read-resource(include-runtime=true)" > deployment-runtime.txt 2>&1
+
+                    type deployment-runtime.txt
+
+                    findstr /i /c:"\\"outcome\\" => \\"success\\"" deployment-runtime.txt > nul
+                    IF ERRORLEVEL 1 exit /b 1
+
+                    findstr /i /c:"\\"status\\" => \\"OK\\"" deployment-runtime.txt > nul
+                    IF ERRORLEVEL 1 exit /b 1
+
+                    echo Rollback ${warFile} is OK on ${serverName}
+                    endlocal
+                    """
+                }
+            }
+        }
+    }
+}

@@ -85,6 +85,7 @@ def deployToServers(servers) {
                         passwordVariable: 'JBOSS_PASS'
                     )
                 ]) {
+
                     stage("Stop Server Group") {
                         bat """
                         @echo off
@@ -98,39 +99,86 @@ def deployToServers(servers) {
                     }
 
                     stage("Wait Stopped") {
-                        timeout(time: 10, unit: 'MINUTES') {
-                            script {
-                                for (serverName in srv.appServers) {
-                                    bat """
-                                    @echo off
-                                    set NOPAUSE=true
-                                    set JAVA_HOME=${srv.java8}
-                                    set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+                        for (serverName in srv.appServers) {
+                            echo "Waiting until ${serverName} is STOPPED..."
 
-                                    :loop
-                                    ping 127.0.0.1 -n 6 > nul
+                            timeout(time: 15, unit: 'MINUTES') {
+                                bat """
+                                @echo off
+                                setlocal
+                                set NOPAUSE=true
+                                set JAVA_HOME=${srv.java8}
+                                set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
 
-                                    call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/host=${srv.hostName}/server-config=${serverName}:read-resource(include-runtime=true)" | findstr /i "\\"status\\" => \\"STOPPED\\""
+                                :loop
+                                ping 127.0.0.1 -n 6 > nul
 
-                                    IF ERRORLEVEL 1 goto loop
-                                    """
-                                }
+                                call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/host=${srv.hostName}/server-config=${serverName}:read-resource(include-runtime=true)" > status.txt 2>&1
+
+                                type status.txt
+
+                                findstr /i /c:"\\"status\\" => \\"STOPPED\\"" status.txt > nul
+                                IF ERRORLEVEL 1 goto loop
+
+                                echo ${serverName} is STOPPED
+                                endlocal
+                                """
                             }
                         }
                     }
 
                     stage("Undeploy / Deploy WAR") {
-                        script {
-                            def warsOutput = powershell(
+                        def warsOutput = powershell(
+                            returnStdout: true,
+                            script: '(Get-ChildItem -Filter *.war | Select-Object -ExpandProperty Name)'
+                        ).trim()
+
+                        if (!warsOutput) {
+                            error "No WAR files found in workspace on ${srv.label}"
+                        }
+
+                        def wars = warsOutput.split("\\r?\\n")
+
+                        bat """
+                        @echo off
+                        set NOPAUSE=true
+                        set JAVA_HOME=${srv.java8}
+                        set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                        call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="ls deployment" > deployed-wars.txt
+                        IF ERRORLEVEL 1 exit /b 1
+                        """
+
+                        for (warFile in wars) {
+                            def exists = powershell(
                                 returnStdout: true,
-                                script: '(Get-ChildItem -Filter *.war | Select-Object -ExpandProperty Name)'
+                                script: """
+                                \$war = '${warFile}'
+                                \$deployments = Get-Content deployed-wars.txt
+
+                                if (\$deployments -contains \$war) {
+                                    Write-Output 'YES'
+                                } else {
+                                    Write-Output 'NO'
+                                }
+                                """
                             ).trim()
 
-                            if (!warsOutput) {
-                                error "No WAR files found in workspace on ${srv.label}"
-                            }
+                            if (exists == 'YES') {
+                                echo "${warFile} already exists. Undeploying first..."
 
-                            def wars = warsOutput.split("\\r?\\n")
+                                bat """
+                                @echo off
+                                set NOPAUSE=true
+                                set JAVA_HOME=${srv.java8}
+                                set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                                call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="undeploy ${warFile} --server-groups=${srv.serverGroup}"
+                                IF ERRORLEVEL 1 exit /b 1
+                                """
+                            } else {
+                                echo "${warFile} does not exist. First DR deployment, skipping undeploy."
+                            }
 
                             bat """
                             @echo off
@@ -138,73 +186,34 @@ def deployToServers(servers) {
                             set JAVA_HOME=${srv.java8}
                             set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
 
-                            call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="ls deployment" > deployed-wars.txt
+                            call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="deploy ${warFile} --server-groups=${srv.serverGroup}"
                             IF ERRORLEVEL 1 exit /b 1
                             """
-
-                            for (warFile in wars) {
-                                def exists = powershell(
-                                    returnStdout: true,
-                                    script: """
-                                    \$war = '${warFile}'
-                                    \$deployments = Get-Content deployed-wars.txt
-                                    if (\$deployments -contains \$war) {
-                                        Write-Output 'YES'
-                                    } else {
-                                        Write-Output 'NO'
-                                    }
-                                    """
-                                ).trim()
-
-                                if (exists == 'YES') {
-                                    echo "${warFile} already exists. Undeploying first..."
-
-                                    bat """
-                                    @echo off
-                                    set NOPAUSE=true
-                                    set JAVA_HOME=${srv.java8}
-                                    set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
-
-                                    call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="undeploy ${warFile} --server-groups=${srv.serverGroup}"
-                                    IF ERRORLEVEL 1 exit /b 1
-                                    """
-                                } else {
-                                    echo "${warFile} does not exist. First DR deployment, skipping undeploy."
-                                }
-
-                                bat """
-                                @echo off
-                                set NOPAUSE=true
-                                set JAVA_HOME=${srv.java8}
-                                set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
-
-                                call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="deploy ${warFile} --server-groups=${srv.serverGroup}"
-                                IF ERRORLEVEL 1 exit /b 1
-                                """
-                            }
                         }
                     }
 
-                    stage("Verify Deployment") {
-                        script {
-                            def warsOutput = powershell(
-                                returnStdout: true,
-                                script: '(Get-ChildItem -Filter *.war | Select-Object -ExpandProperty Name)'
-                            ).trim()
+                    stage("Verify Deployment Config") {
+                        def warsOutput = powershell(
+                            returnStdout: true,
+                            script: '(Get-ChildItem -Filter *.war | Select-Object -ExpandProperty Name)'
+                        ).trim()
 
-                            def wars = warsOutput.split("\\r?\\n")
+                        if (!warsOutput) {
+                            error "No WAR files found in workspace on ${srv.label}"
+                        }
 
-                            for (warFile in wars) {
-                                bat """
-                                @echo off
-                                set NOPAUSE=true
-                                set JAVA_HOME=${srv.java8}
-                                set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+                        def wars = warsOutput.split("\\r?\\n")
 
-                                call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="deployment-info --name=${warFile}"
-                                IF ERRORLEVEL 1 exit /b 1
-                                """
-                            }
+                        for (warFile in wars) {
+                            bat """
+                            @echo off
+                            set NOPAUSE=true
+                            set JAVA_HOME=${srv.java8}
+                            set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                            call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="deployment-info --name=${warFile}"
+                            IF ERRORLEVEL 1 exit /b 1
+                            """
                         }
                     }
 
@@ -215,11 +224,9 @@ def deployToServers(servers) {
 
                         rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-one\\data" 2>NUL
                         rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-one\\tmp" 2>NUL
-                        rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-one\\log" 2>NUL
 
                         rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-two\\data" 2>NUL
                         rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-two\\tmp" 2>NUL
-                        rmdir /S /Q "%JBOSS_HOME_2%\\domain\\servers\\oldapp-server-two\\log" 2>NUL
                         '''
                     }
 
@@ -235,24 +242,71 @@ def deployToServers(servers) {
                         """
                     }
 
-                    stage("Wait Started") {
-                        timeout(time: 15, unit: 'MINUTES') {
-                            script {
-                                for (serverName in srv.appServers) {
-                                    bat """
-                                    @echo off
-                                    set NOPAUSE=true
-                                    set JAVA_HOME=${srv.java8}
-                                    set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+                    stage("Wait Runtime Running") {
+                        for (serverName in srv.appServers) {
+                            echo "Waiting until ${serverName} runtime is running..."
 
-                                    :loop
-                                    ping 127.0.0.1 -n 6 > nul
+                            timeout(time: 30, unit: 'MINUTES') {
+                                bat """
+                                @echo off
+                                setlocal
+                                set NOPAUSE=true
+                                set JAVA_HOME=${srv.java8}
+                                set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
 
-                                    call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/host=${srv.hostName}/server-config=${serverName}:read-resource(include-runtime=true)" | findstr /i "\\"status\\" => \\"STARTED\\""
+                                :loop
+                                ping 127.0.0.1 -n 6 > nul
 
-                                    IF ERRORLEVEL 1 goto loop
-                                    """
-                                }
+                                call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/host=${srv.hostName}/server=${serverName}:read-resource(include-runtime=true)" > runtime-status.txt 2>&1
+
+                                type runtime-status.txt
+
+                                findstr /i /c:"\\"server-state\\" => \\"running\\"" runtime-status.txt > nul
+                                IF ERRORLEVEL 1 goto loop
+
+                                echo ${serverName} runtime is running
+                                endlocal
+                                """
+                            }
+                        }
+                    }
+
+                    stage("Verify Runtime Deployment") {
+                        def warsOutput = powershell(
+                            returnStdout: true,
+                            script: '(Get-ChildItem -Filter *.war | Select-Object -ExpandProperty Name)'
+                        ).trim()
+
+                        if (!warsOutput) {
+                            error "No WAR files found in workspace on ${srv.label}"
+                        }
+
+                        def wars = warsOutput.split("\\r?\\n")
+
+                        for (serverName in srv.appServers) {
+                            for (warFile in wars) {
+                                echo "Verifying ${warFile} on ${serverName}..."
+
+                                bat """
+                                @echo off
+                                setlocal
+                                set NOPAUSE=true
+                                set JAVA_HOME=${srv.java8}
+                                set PATH=%JAVA_HOME%\\bin;C:\\Windows\\System32;C:\\Windows
+
+                                call "%JBOSS%" -c --controller=%CONTROLLER% --user=%JBOSS_USER% --password=%JBOSS_PASS% --command="/host=${srv.hostName}/server=${serverName}/deployment=${warFile}:read-resource(include-runtime=true)" > deployment-runtime.txt 2>&1
+
+                                type deployment-runtime.txt
+
+                                findstr /i /c:"\\"outcome\\" => \\"success\\"" deployment-runtime.txt > nul
+                                IF ERRORLEVEL 1 exit /b 1
+
+                                findstr /i /c:"\\"status\\" => \\"OK\\"" deployment-runtime.txt > nul
+                                IF ERRORLEVEL 1 exit /b 1
+
+                                echo ${warFile} is OK on ${serverName}
+                                endlocal
+                                """
                             }
                         }
                     }
