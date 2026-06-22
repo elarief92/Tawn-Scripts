@@ -9,8 +9,6 @@ pipeline {
         CONTROLLER   = 'localhost:10019'
         JBOSS        = 'E:\\EAP-6.4.0\\bin\\jboss-cli.bat'
         JBOSS_HOME_2 = 'E:\\EAP-6.4.0'
-
-        DR_DEPLOY_JOB = 'E Bus/Deploy_Prod-DR/Deploy_DR'
     }
 
     stages {
@@ -21,19 +19,20 @@ pipeline {
                         error "BUILD_JOB_NAME is required"
                     }
 
-                    echo "PROD deployment artifact source: ${params.BUILD_JOB_NAME}"
+                    echo "DR deployment artifact source: ${params.BUILD_JOB_NAME}"
                 }
             }
         }
 
-        stage('Deploy PROD Sequentially') {
+        stage('Deploy DR Sequentially') {
             steps {
                 script {
                     def servers = [
+                        
                         [
-                            label      : 'DRV-BUSS-SAPP03',
+                            label      : 'DRV-BUSS-SAPP04',
                             serverGroup: 'oldapp-server-group',
-                            java8      : 'C:\\Program Files\\Java\\jdk1.8.0_471',
+                            java8      : 'C:\\Program Files\\Java\\jdk-1.8',
                             hostName   : 'master',
                             appServers : ['oldapp-server-one', 'oldapp-server-two']
                         ]
@@ -42,16 +41,6 @@ pipeline {
                     deployToServers(servers)
                 }
             }
-        }
-    }
-
-    post {
-        success {
-            build job: "${DR_DEPLOY_JOB}",
-                parameters: [
-                    string(name: 'BUILD_JOB_NAME', value: params.BUILD_JOB_NAME)
-                ],
-                wait: false
         }
     }
 }
