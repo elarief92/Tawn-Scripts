@@ -1,10 +1,6 @@
 pipeline {
     agent none
 
-    parameters {
-        string(name: 'BUILD_JOB_NAME', defaultValue: '', description: 'Upstream Jenkins build job name that produced the WAR')
-    }
-
     environment {
         CONTROLLER   = 'localhost:10019'
         JBOSS        = 'E:\\EAP-6.4.0\\bin\\jboss-cli.bat'
@@ -15,11 +11,14 @@ pipeline {
         stage('Validate Parameters') {
             steps {
                 script {
-                    if (!params.BUILD_JOB_NAME?.trim()) {
-                        error "BUILD_JOB_NAME is required"
+                    def buildJobs = getBuildJobs()
+
+                    if (buildJobs.isEmpty()) {
+                        error "BUILD_JOB_NAMES is required. It should be passed from PROD job."
                     }
 
-                    echo "DR deployment artifact source: ${params.BUILD_JOB_NAME}"
+                    echo "DR deployment artifact sources:"
+                    buildJobs.each { echo "- ${it}" }
                 }
             }
         }
@@ -28,7 +27,6 @@ pipeline {
             steps {
                 script {
                     def servers = [
-                        
                         [
                             label      : 'DRV-BUSS-SAPP04',
                             serverGroup: 'oldapp-server-group',
@@ -45,6 +43,13 @@ pipeline {
     }
 }
 
+def getBuildJobs() {
+    return "${params.BUILD_JOB_NAMES}"
+        .split(',')
+        .collect { it.trim() }
+        .findAll { it }
+}
+
 def deployToServers(servers) {
     for (srv in servers) {
         stage("Deploy to Server ${srv.label}") {
@@ -52,17 +57,23 @@ def deployToServers(servers) {
                 cleanWs()
 
                 stage("Get WAR Artifact") {
-                    copyArtifacts(
-                        projectName: "${params.BUILD_JOB_NAME}",
-                        selector: lastSuccessful(),
-                        filter: '**/*.war',
-                        flatten: true,
-                        fingerprintArtifacts: true
-                    )
+                    def buildJobs = getBuildJobs()
+
+                    for (buildJob in buildJobs) {
+                        echo "Copying WAR artifact from: ${buildJob}"
+
+                        copyArtifacts(
+                            projectName: buildJob,
+                            selector: lastSuccessful(),
+                            filter: '**/*.war',
+                            flatten: true,
+                            fingerprintArtifacts: true
+                        )
+                    }
 
                     bat '''
                     @echo off
-                    echo WAR artifact copied:
+                    echo WAR artifacts copied:
                     dir *.war
                     '''
                 }
@@ -158,7 +169,7 @@ def deployToServers(servers) {
                                     IF ERRORLEVEL 1 exit /b 1
                                     """
                                 } else {
-                                    echo "${warFile} does not exist. First deployment, skipping undeploy."
+                                    echo "${warFile} does not exist. First DR deployment, skipping undeploy."
                                 }
 
                                 bat """

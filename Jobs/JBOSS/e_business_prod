@@ -1,10 +1,6 @@
 pipeline {
     agent none
 
-    parameters {
-        string(name: 'BUILD_JOB_NAME', defaultValue: '', description: 'Upstream Jenkins build job name that produced the WAR')
-    }
-
     environment {
         CONTROLLER   = 'localhost:10019'
         JBOSS        = 'E:\\EAP-6.4.0\\bin\\jboss-cli.bat'
@@ -17,11 +13,14 @@ pipeline {
         stage('Validate Parameters') {
             steps {
                 script {
-                    if (!params.BUILD_JOB_NAME?.trim()) {
-                        error "BUILD_JOB_NAME is required"
+                    def buildJobs = getBuildJobs()
+
+                    if (buildJobs.isEmpty()) {
+                        error "BUILD_JOB_NAMES is required. Select one or more source build jobs."
                     }
 
-                    echo "PROD deployment artifact source: ${params.BUILD_JOB_NAME}"
+                    echo "PROD deployment artifact sources:"
+                    buildJobs.each { echo "- ${it}" }
                 }
             }
         }
@@ -49,11 +48,18 @@ pipeline {
         success {
             build job: "${DR_DEPLOY_JOB}",
                 parameters: [
-                    string(name: 'BUILD_JOB_NAME', value: params.BUILD_JOB_NAME)
+                    string(name: 'BUILD_JOB_NAMES', value: "${params.BUILD_JOB_NAMES}")
                 ],
                 wait: false
         }
     }
+}
+
+def getBuildJobs() {
+    return "${params.BUILD_JOB_NAMES}"
+        .split(',')
+        .collect { it.trim() }
+        .findAll { it }
 }
 
 def deployToServers(servers) {
@@ -63,17 +69,23 @@ def deployToServers(servers) {
                 cleanWs()
 
                 stage("Get WAR Artifact") {
-                    copyArtifacts(
-                        projectName: "${params.BUILD_JOB_NAME}",
-                        selector: lastSuccessful(),
-                        filter: '**/*.war',
-                        flatten: true,
-                        fingerprintArtifacts: true
-                    )
+                    def buildJobs = getBuildJobs()
+
+                    for (buildJob in buildJobs) {
+                        echo "Copying WAR artifact from: ${buildJob}"
+
+                        copyArtifacts(
+                            projectName: buildJob,
+                            selector: lastSuccessful(),
+                            filter: '**/*.war',
+                            flatten: true,
+                            fingerprintArtifacts: true
+                        )
+                    }
 
                     bat '''
                     @echo off
-                    echo WAR artifact copied:
+                    echo WAR artifacts copied:
                     dir *.war
                     '''
                 }
