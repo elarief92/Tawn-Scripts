@@ -47,13 +47,14 @@ pipeline {
             }
         }
 
-        stage('Sonar Begin + Build + Sonar End') {
+        stage('Sonar Begin + Restore + Build + Sonar End') {
             agent { label 'CRM-SQL-UAT' }
 
             environment {
                 SONAR_USER_HOME = 'E:\\.sonar_cache'
                 SONAR_MSBUILD   = 'E:\\$tools\\SonarScannerMSBuild\\SonarScanner.MSBuild.exe'
-                MSBUILD_EXE     = 'C:\\Program Files (x86)\\MSBuild\\14.0\\Bin\\MSBuild.exe'
+                MSBUILD_EXE     = 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\MSBuild\\Current\\Bin\\MSBuild.exe'
+                NUGET_EXE       = 'E:\\$tools\\nuget\\nuget.exe'
                 SOLUTION_FILE   = 'Tawuniya.Crm.sln'
             }
 
@@ -73,6 +74,8 @@ pipeline {
                             /d:sonar.scanner.skip.ssl.verification=true ^
                             /d:sonar.scanner.skipJreProvisioning=true
                         """
+
+                        bat '"%NUGET_EXE%" restore "%SOLUTION_FILE%"'
 
                         bat '"%MSBUILD_EXE%" "%SOLUTION_FILE%" /t:Rebuild /p:Configuration=Release /p:RestorePackages=true'
 
