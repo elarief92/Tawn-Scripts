@@ -30,9 +30,16 @@ pipeline {
                 script {
                     def servers = [
                         [
-                            label      : 'DRV-BUSS-SAPP03',
+                            label      : 'hqv-buss-sapp03',
                             serverGroup: 'oldapp-server-group',
-                            java8      : 'C:\\Program Files\\Java\\jdk1.8.0_471',
+                            java8      : 'C:\\Program Files\\Java\\jdk-1.8',
+                            hostName   : 'master',
+                            appServers : ['oldapp-server-one', 'oldapp-server-two']
+                        ],
+                        [
+                            label      : 'hqv-buss-sapp04',
+                            serverGroup: 'oldapp-server-group',
+                            java8      : 'C:\\Program Files\\Java\\jdk-1.8',
                             hostName   : 'master',
                             appServers : ['oldapp-server-one', 'oldapp-server-two']
                         ]
