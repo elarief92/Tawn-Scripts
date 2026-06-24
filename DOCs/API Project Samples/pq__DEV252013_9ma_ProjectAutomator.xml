@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?><DeployerSpec exitOnError="true" sourceType="Runtime">
+<DeployerServer>
+<host>${machinename}:${isport}</host>
+<user>${Username}</user>
+<pwd>${Password}</pwd>
+<!--<pwdHandle>$(PasswordHandle)</pwdHandle>-->
+</DeployerServer>
+<Environment>
+<IS>
+<isalias name="DEV_10_11"/>
+<isalias name="QC_IS_181">
+<host>10.24.7.181</host>
+<port>5555</port>
+<user>Administrator</user>
+<pwd>${Password}</pwd>
+<!--<pwdHandle>$(PasswordHandle)</pwdHandle>-->
+<useSSL>false</useSSL>
+<version>10.11</version>
+<installDeployerResource>false</installDeployerResource>
+<Test>false</Test>
+<executeACL>Internal</executeACL>
+</isalias>
+<isalias name="UAT_IS_27">
+<host>10.24.7.27</host>
+<port>5555</port>
+<user>Administrator</user>
+<pwd>${Password}</pwd>
+<!--<pwdHandle>$(PasswordHandle)</pwdHandle>-->
+<useSSL>false</useSSL>
+<version>10.11</version>
+<installDeployerResource>false</installDeployerResource>
+<Test>false</Test>
+<executeACL>Internal</executeACL>
+</isalias>
+</IS>
+</Environment>
+<Projects projectPrefix="">
+<Project description="DEV25-2013" name="DEV25-2013" overwrite="false" type="Runtime">
+<DeploymentSet defaultDependencyAction="fulladd" description="" mode="Deploy" name="myDeploymentSet" otherRegExp="" packageRegExp="" srcAlias="DEV_10_11" type="IS">
+<AdapterService name="TawnMobileApplication.v01.adapter.MOFA:getDocomosisURL" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<AdapterService name="TawnMobileApplication.v01.adapter.MOFA:getMedicalPolicyDetails" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<AdapterService name="TawnMobileApplication.v01.adapter.MOFA:getMofaEcard" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<AdapterService name="TawnMobileApplication.v01.adapter.MOFA:getMofaInternationalProviders" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<AdapterService name="TawnMobileApplication.v01.adapter.MOFA:getMofaRegions" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<Document name="TawnMobileApplication.v01.documents.getMedicalPolicyDetails:membersList" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<FlowService name="TawnMobileApplication.v01.bussinessServices:getMedicalPolicyDetails" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<FlowService name="TawnMobileApplication.v01.bussinessServices:getMofaDocomosisURL" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<FlowService name="TawnMobileApplication.v01.bussinessServices:getMofaEcard" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<FlowService name="TawnMobileApplication.v01.bussinessServices:getMofaInternationalProviders" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<FlowService name="TawnMobileApplication.v01.bussinessServices:getMofaRegions" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<FlowService name="TawnMobileApplication.v01.bussinessServices.restful.MOFA.getEcard:_post" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<FlowService name="TawnMobileApplication.v01.bussinessServices.restful.MOFA.getMofaDocomosisURL:_post" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<FlowService name="TawnMobileApplication.v01.bussinessServices.restful.MOFA.getMofaInternationalProviders:_post" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<FlowService name="TawnMobileApplication.v01.bussinessServices.restful.MOFA.getMofaRegions:_post" package="TawnMobileApplication" srcAlias="DEV_10_11"/>
+<AdapterService name="TawnReports.adapters.MOFA:getMofaReportData" package="TawnReports" srcAlias="DEV_10_11"/>
+<FlowService name="TawnReports.restful.getMofaDocomosisData:_post" package="TawnReports" srcAlias="DEV_10_11"/>
+<FlowService name="TawnReports.services:getMofaDocomosisData" package="TawnReports" srcAlias="DEV_10_11"/>
+</DeploymentSet>
+<DeploymentBuild description="" name="myBuild.zip"/>
+<DeploymentMap description="" name="myDeploymentMap_qc_uat"/>
+<MapSetMapping mapName="myDeploymentMap_qc_uat" setName="myDeploymentSet">
+<alias>QC_IS_181</alias>
+<alias>UAT_IS_27</alias>
+</MapSetMapping>
+<DeploymentMap description="" name="myDeploymentMap-qcanduat 2"/>
+<MapSetMapping mapName="myDeploymentMap-qcanduat 2" setName="myDeploymentSet">
+<alias>QC_IS_181</alias>
+<alias>UAT_IS_27</alias>
+</MapSetMapping>
+<DeploymentMap description="" name="myDeploymentMap-qcanduat"/>
+<MapSetMapping mapName="myDeploymentMap-qcanduat" setName="myDeploymentSet"/>
+<DeploymentMap description="" name="myDeploymentMap-qcanduat100"/>
+<MapSetMapping mapName="myDeploymentMap-qcanduat100" setName="myDeploymentSet">
+<alias>QC_IS_181</alias>
+<alias>UAT_IS_27</alias>
+</MapSetMapping>
+<DeploymentCandidate buildName="myBuild.zip" description="" mapName="myDeploymentMap_qc_uat" name="myDeployment_qc_uat"/>
+<DeploymentCandidate buildName="myBuild.zip" description="" mapName="myDeploymentMap_qc_uat" name="myDeployment-qc-uat1"/>
+<DeploymentCandidate buildName="myBuild.zip" description="" mapName="myDeploymentMap-qcanduat 2" name="myDeploymentqcanduat2"/>
+<DeploymentCandidate buildName="myBuild.zip" description="" mapName="myDeploymentMap-qcanduat100" name="myDeploymentqcanduat100"/>
+</Project>
+</Projects>
+</DeployerSpec>

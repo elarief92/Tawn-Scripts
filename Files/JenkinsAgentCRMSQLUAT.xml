@@ -1,0 +1,13 @@
+<service>
+  <id>JenkinsAgentCRMSQLUAT</id>
+  <name>Jenkins Agent CRM-SQL-UAT</name>
+  <description>Jenkins agent CRM-SQL-UAT</description>
+  <executable>E:\jdk-21\bin\java.exe</executable>
+  <arguments>-jar E:\Jenkins\agent.jar -noCertificateCheck -url https://jenkins.tawn.com/ -secret e8a38f83703c6c944cb3ac06ce8616929d32ad1ac1aef618a5eef75dc083fe88 -name CRM-SQL-UAT -webSocket -workDir E:\Jenkins</arguments>
+  <logpath>E:\Jenkins</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>
