@@ -47,7 +47,7 @@ pipeline {
 
             sonar: [
               server: 'SonarQube',
-              projectKey: 'DH-WORKSHOP-PORTAL-V3',
+              projectKey: 'DH-HAJJ-UMRAH-PORTAL',
               sources: '.',
               inclusions: '**/*',
               tsconfigPaths: 'tsconfig.json',

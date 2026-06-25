@@ -45,8 +45,8 @@ pipeline {
               credentialsId: 'Admin_Bitbucket',
               id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
               projectName: 'DXP',
-              repositoryName: 'DH-Sales-V3',
-              remoteName: 'dh-sales-v3',
+              repositoryName: 'DH-General-V3',
+              remoteName: 'dh-general-v3',
               serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
             ],
 

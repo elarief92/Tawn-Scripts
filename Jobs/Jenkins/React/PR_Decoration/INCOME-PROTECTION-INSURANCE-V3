@@ -45,45 +45,45 @@ pipeline {
               credentialsId: 'Admin_Bitbucket',
               id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
               projectName: 'DXP',
-              repositoryName: 'DH-Health-V3',
-              remoteName: 'dh-health-v3',
+              repositoryName: 'DH-General-V3',
+              remoteName: 'dh-general-v3',
               serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
             ],
 
             app: [
-              path: 'apps/visit-visa/',
+              path: 'apps/income-protection-insurance/',
               packageFile: 'package.json'
             ],
 
             node: [
               resetCmd: '',
               installCmd: 'set NODE_OPTIONS=--max-old-space-size=8192 && set ESBUILD_MAX_HEAP_SIZE=8192 && npm install --legacy-peer-deps',
-              buildCmd: 'npx nx build visit-visa --configuration=development',
-              testCoverageCmd: 'npx vitest run --coverage --passWithNoTests --config apps/visit-visa/vitest.config.mts --dir apps/visit-visa --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
+              buildCmd: 'npx nx build income-protection-insurance --configuration=development',
+              testCoverageCmd: 'npx vitest run --coverage --passWithNoTests --config apps/income-protection-insurance/vitest.config.mts --dir apps/income-protection-insurance --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 
             artifacts: [
-              path: 'dist/apps/visit-visa/**'
+              path: 'dist/apps/income-protection-insurance/**'
             ],
 
             sonar: [
-              projectKey: 'FE-SALES-VISIT-VISA-V3',
+              projectKey: 'INCOME-PROTECTION-INSURANCE-V3',
 
               mainGate: 'Quality Gate-Tawuniya',
               prGate: 'Refactor Gate',
 
-              sources: 'apps/visit-visa/src',
-              tests: 'apps/visit-visa/src',
+              sources: 'apps/income-protection-insurance/src',
+              tests: 'apps/income-protection-insurance/src',
 
-              inclusions: 'apps/visit-visa/src/**/*.ts,apps/visit-visa/src/**/*.tsx',
+              inclusions: 'apps/income-protection-insurance/src/**/*.ts,apps/income-protection-insurance/src/**/*.tsx',
               testInclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx',
 
-              tsconfigPaths: 'apps/visit-visa/tsconfig.json',
+              tsconfigPaths: 'apps/income-protection-insurance/tsconfig.json',
               lcovReportPath: 'coverage/lcov.info',
 
               exclusions: '**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
               coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/assets/**',
-              cpdExclusions: 'apps/visit-visa/src/app/Components/Kyc/data.ts',
+              cpdExclusions: '',
 
               pullRequestId: env.PR_ID ?: params.PR_ID,
               sourceBranch: env.PR_SOURCE_BRANCH ?: params.PR_SOURCE_BRANCH

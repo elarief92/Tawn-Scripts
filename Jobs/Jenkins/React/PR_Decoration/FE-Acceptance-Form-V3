@@ -56,8 +56,8 @@ pipeline {
             ],
 
             node: [
-              installCmd: 'npm install --legacy-peer-deps',
-              buildCmd: 'npm run acceptance-form:build:qa',
+              installCmd: 'set NODE_OPTIONS=--max-old-space-size=8192 && set ESBUILD_MAX_HEAP_SIZE=8192 && npm install --legacy-peer-deps',
+              buildCmd: 'npm run acceptance-form:build:dev',
               testCoverageCmd: 'npx vitest run --coverage --passWithNoTests --config apps/acceptance-form/vitest.config.mts --dir apps/acceptance-form --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 
