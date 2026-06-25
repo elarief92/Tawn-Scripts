@@ -4,12 +4,13 @@ pipeline {
   agent none
 
   parameters {
-    string(name: 'EPIC', defaultValue: '', description: 'EPIC Number')
+    string(name: 'EPIC', defaultValue: '', description: 'Use a Valid Jira Epic Number')
   }
 
   environment {
-    BRANCH_NAME = 'DEV'
+    BRANCH_NAME = 'QC'
     NODE_TLS_REJECT_UNAUTHORIZED = '0'
+    GIT_SSL_NO_VERIFY = 'true'
   }
 
   stages {
@@ -28,19 +29,21 @@ pipeline {
               credentialsId: 'Admin_Bitbucket',
               id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
               projectName: 'DXP',
-              repositoryName: 'DH-Sales-V3',
+              repositoryName: 'DH-Health-V3',
+              remoteName: 'dh-health-v3',
               serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
             ],
 
             app: [
+              path: 'apps/visit-visa/',
               packageFile: 'package.json'
             ],
 
-           node: [
+            node: [
               resetCmd: '',
-              installCmd: 'npm install --legacy-peer-deps',
-              buildCmd: 'npx nx build visit-visa --configuration=development',
-              testCoverageCmd: 'npx vitest run --coverage --config apps/visit-visa/vitest.config.mts --dir apps/visit-visa --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
+              installCmd: 'set NODE_OPTIONS=--max-old-space-size=8192 && set ESBUILD_MAX_HEAP_SIZE=8192 && npm install --legacy-peer-deps',
+              buildCmd: 'npm run visit-visa:build:qa',
+              testCoverageCmd: 'npx vitest run --coverage --passWithNoTests --config apps/visit-visa/vitest.config.mts --dir apps/visit-visa --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
             ],
 
             artifacts: [
@@ -48,15 +51,23 @@ pipeline {
             ],
 
             sonar: [
-              server: 'SonarQube',
               projectKey: 'FE-SALES-VISIT-VISA-V3',
+
+              mainGate: 'Quality Gate-Tawuniya',
+              prGate: 'Refactor Gate',
+
               sources: 'apps/visit-visa/src',
-              inclusions: 'apps/visit-visa/**',
+              tests: 'apps/visit-visa/src',
+
+              inclusions: 'apps/visit-visa/src/**/*.ts,apps/visit-visa/src/**/*.tsx',
+              testInclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx',
+
               tsconfigPaths: 'apps/visit-visa/tsconfig.json',
               lcovReportPath: 'coverage/lcov.info',
-              testExecutionReportPath: 'reports/junit.xml',
-              cpdExclusions: 'apps/visit-visa/src/app/Components/Kyc/data.ts',
-              exclusions: '**/*.spec.ts,**/*.spec.tsx,**/*.test.ts,**/*.test.tsx,**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**'
+
+              exclusions: '**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
+              coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/assets/**',
+              cpdExclusions: 'apps/visit-visa/src/app/Components/Kyc/data.ts'
             ]
           )
         }

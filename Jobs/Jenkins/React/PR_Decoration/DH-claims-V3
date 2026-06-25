@@ -67,7 +67,7 @@ pipeline {
             ],
 
             sonar: [
-              projectKey: 'FE-DH-CLAIMS-V3',
+              projectKey: 'DH-CLAIMS-V3',
 
               mainGate: 'Quality Gate-Tawuniya',
               prGate: 'Refactor Gate',
