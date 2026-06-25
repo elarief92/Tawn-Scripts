@@ -1,0 +1,77 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+  agent none
+
+  parameters {
+    string(name: 'EPIC', defaultValue: '', description: 'Use a Valid Jira Epic Number')
+  }
+
+  environment {
+    BRANCH_NAME = 'PROD'
+    NODE_TLS_REJECT_UNAUTHORIZED = '0'
+    GIT_SSL_NO_VERIFY = 'true'
+  }
+
+  stages {
+    stage('Build + Scan') {
+      steps {
+        script {
+          reactBuildScan(
+            epic: params.EPIC,
+            branch: env.BRANCH_NAME,
+            lob: 'DXP',
+            buildAgent: 'built-in',
+            secretScanningAgent: 'built-in',
+            sonarAgent: 'SonarQube',
+
+            bbs: [
+              credentialsId: 'Admin_Bitbucket',
+              id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+              projectName: 'DXP',
+              repositoryName: 'DH-General-V3',
+              remoteName: 'dh-general-v3',
+              serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+            ],
+
+            app: [
+              path: 'apps/travel-insurance/',
+              packageFile: 'package.json'
+            ],
+
+            node: [
+              resetCmd: '',
+              installCmd: 'set NODE_OPTIONS=--max-old-space-size=8192 && set ESBUILD_MAX_HEAP_SIZE=8192 && npm install --legacy-peer-deps',
+              buildCmd: 'npm run travel-insurance:build',
+              testCoverageCmd: 'npx vitest run --coverage --passWithNoTests --config apps/travel-insurance/vitest.config.mts --dir apps/travel-insurance --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
+            ],
+
+            artifacts: [
+              path: 'dist/apps/travel-insurance/**'
+            ],
+
+            sonar: [
+              projectKey: 'FE-TRAVEL-INSURANCE-V3',
+
+              mainGate: 'Quality Gate-Tawuniya',
+              prGate: 'Refactor Gate',
+
+              sources: 'apps/travel-insurance/src',
+              tests: 'apps/travel-insurance/src',
+
+              inclusions: 'apps/travel-insurance/src/**/*.ts,apps/travel-insurance/src/**/*.tsx',
+              testInclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx',
+
+              tsconfigPaths: 'apps/travel-insurance/tsconfig.json',
+              lcovReportPath: 'coverage/lcov.info',
+
+              exclusions: '**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
+              coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/assets/**',
+              cpdExclusions: ''
+            ]
+          )
+        }
+      }
+    }
+  }
+}
