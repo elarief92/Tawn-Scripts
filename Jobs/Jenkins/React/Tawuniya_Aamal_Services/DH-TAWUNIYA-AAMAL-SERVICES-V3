@@ -1,0 +1,129 @@
+@Library('Tawuniya-lib@main') _
+
+pipeline {
+  agent none
+
+  parameters {
+    string(
+      name: 'EPIC',
+      defaultValue: '',
+      description: 'Use a Valid Jira Epic Number'
+    )
+
+    string(
+      name: 'PR_ID',
+      defaultValue: '',
+      description: 'Bitbucket Pull Request ID. Filled automatically by Generic Webhook Trigger'
+    )
+
+    string(
+      name: 'PR_SOURCE_BRANCH',
+      defaultValue: '',
+      description: 'Feature/source branch. Filled automatically by Generic Webhook Trigger'
+    )
+  }
+
+  environment {
+    BRANCH_NAME = 'DEV'
+    NODE_TLS_REJECT_UNAUTHORIZED = '0'
+    GIT_SSL_NO_VERIFY = 'true'
+  }
+
+  stages {
+    stage('Build + Scan') {
+      steps {
+        script {
+          reactBuildScan(
+            epic: params.EPIC,
+            branch: env.BRANCH_NAME,
+            lob: 'DXP',
+
+            buildAgent: 'built-in',
+            secretScanningAgent: 'built-in',
+            sonarAgent: 'SonarQube',
+
+            bbs: [
+              credentialsId : 'Admin_Bitbucket',
+              id            : '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
+              projectName   : 'DXP',
+              repositoryName: 'Tawuniya_Aamal_Services',
+              remoteName    : 'tawuniya_aamal_services',
+              serverId      : '2492752c-5622-4c29-9972-c1c0f572b1f6'
+            ],
+
+            app: [
+              path       : 'apps/aamal/',
+              packageFile: 'package.json'
+            ],
+
+            node: [
+              resetCmd: '''
+                        @echo off
+                        set NX_DAEMON=false
+                        call npx nx reset
+                        ''',
+
+              installCmd: '''
+                        @echo off
+                        taskkill /F /IM node.exe /T 2>nul
+                        taskkill /F /IM vite.exe /T 2>nul
+                        
+                        set NODE_OPTIONS=--max-old-space-size=8192
+                        set ESBUILD_MAX_HEAP_SIZE=8192
+                        set NX_DAEMON=false
+                        set NX_PLUGIN_NO_TIMEOUTS=true
+                        
+                        if exist node_modules rmdir /s /q node_modules
+                        if exist package-lock.json del /f /q package-lock.json
+                        
+                        call npm cache clean --force
+                        call npm cache verify
+                        call npm install --legacy-peer-deps --cache C:\\npm-cache --prefer-online
+                        ''',
+
+              buildCmd: '''
+                        @echo off
+                        set NX_DAEMON=false
+                        set NX_PLUGIN_NO_TIMEOUTS=true
+                        set NX_VERBOSE_LOGGING=true
+                        set NODE_OPTIONS=--max-old-space-size=8192
+                        set ESBUILD_MAX_HEAP_SIZE=8192
+                        
+                        call npx nx build aamal --configuration=dev --verbose
+                        ''',
+
+              testCoverageCmd: 'npx vitest run --coverage --passWithNoTests --config apps/aamal/vitest.config.mts --dir apps/aamal --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml'
+            ],
+
+            artifacts: [
+              path: 'dist/aamal-eservices/**,epic.txt,artifact_version.txt'
+            ],
+
+            sonar: [
+              projectKey: 'DH-TAWUNIYA-AAMAL-SERVICES-V3',
+
+              mainGate: 'Quality Gate-Tawuniya',
+              prGate  : 'Refactor Gate',
+
+              sources: 'apps/aamal/src',
+              tests  : 'apps/aamal/src',
+
+              inclusions    : 'apps/aamal/src/**/*.ts,apps/aamal/src/**/*.tsx',
+              testInclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx',
+
+              tsconfigPaths : 'apps/aamal/tsconfig.json',
+              lcovReportPath: 'coverage/lcov.info',
+
+              exclusions        : '**/*.map,**/node_modules/**,**/dist/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
+              coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/assets/**',
+              cpdExclusions     : '',
+
+              pullRequestId: env.PR_ID ?: params.PR_ID,
+              sourceBranch : env.PR_SOURCE_BRANCH ?: params.PR_SOURCE_BRANCH
+            ]
+          )
+        }
+      }
+    }
+  }
+}
