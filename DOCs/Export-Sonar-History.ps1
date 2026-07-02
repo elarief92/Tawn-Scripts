@@ -1,4 +1,6 @@
 # Export-Sonar-History.ps1
+# powershell.exe -ExecutionPolicy Bypass -File "C:\Users\VDR000691\Documents\Tawn-Scripts\DOCs\Export-Sonar-History.ps1"
+
 
 $SonarUrl = "https://sonarqube.tawuniya.com"
 $Token    = "squ_82a0e98f86bf06b15d6e0c92f0b3c6d4dae5a441"
@@ -12,7 +14,6 @@ $Projects = @(
   "DXP-DH-WORKSHOP-PORTAL-V3",
   "DXP-DH-RECOVERY-PORTAL-V3",
   "DXP-BFF-WEB"
-  
 )
 
 $Metrics = @(
@@ -21,6 +22,7 @@ $Metrics = @(
   "code_smells",
   "security_hotspots",
   "coverage",
+  "duplicated_lines_density",
   "reliability_rating",
   "security_rating",
   "sqale_rating",
@@ -45,7 +47,7 @@ function Convert-SonarRating {
     }
 }
 
-$OutputDir = "$env:USERPROFILE\Desktop\SonarReports"
+$OutputDir = "C:\Users\VDR000691\Documents\Tawn-Scripts\DOCs\SonarReports"
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
 $pair = "$($Token):"
@@ -93,6 +95,7 @@ foreach ($Project in $Projects) {
                 code_smells            = ""
                 security_hotspots      = ""
                 coverage               = ""
+                duplication            = ""
                 reliability_rating     = ""
                 security_rating        = ""
                 maintainability_rating = ""
@@ -112,6 +115,9 @@ foreach ($Project in $Projects) {
                     }
                     "sqale_rating" {
                         $row["maintainability_rating"] = Convert-SonarRating $value
+                    }
+                    "duplicated_lines_density" {
+                        $row["duplication"] = if ($null -eq $value) { "" } else { $value }
                     }
                     default {
                         $row[$metric] = if ($null -eq $value) { "" } else { $value }
