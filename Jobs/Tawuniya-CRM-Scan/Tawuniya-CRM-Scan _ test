@@ -1,0 +1,134 @@
+pipeline {
+    agent none
+
+    parameters {
+        choice(name: 'BRANCH_NAME', choices: ['DEV', 'QC', 'UAT', 'PROD'], description: 'Select the branch to scan')
+        string(name: 'Project_Version', defaultValue: '1.0.0', description: 'Enter the version for this analysis')
+    }
+
+    stages {
+        stage('Set Build Name') {
+            agent { label 'CRM-SQL-UAT' }
+            steps {
+                script {
+                    currentBuild.displayName = "#${BUILD_NUMBER}-${params.BRANCH_NAME}"
+                }
+            }
+        }
+
+        stage('Checkout SCM') {
+            agent { label 'CRM-SQL-UAT' }
+            steps {
+                cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)
+
+                script {
+                    env.PATH = "C:\\Program Files\\Git\\cmd;C:\\Program Files\\Git\\bin;${env.PATH}"
+
+                    bat 'git --version'
+                    bat 'git config --global http.sslVerify false'
+
+                    git(
+                        credentialsId: 'Admin_Bitbucket',
+                        url: 'https://bitbucket.tawn.com/scm/mscrm/tawuniya-crm.git',
+                        branch: "${params.BRANCH_NAME}"
+                    )
+                }
+            }
+        }
+
+        stage('Sonar Begin + Restore + Build + Test + Sonar End') {
+            agent { label 'CRM-SQL-UAT' }
+
+            environment {
+                SONAR_USER_HOME = 'E:\\.sonar_cache'
+                SONAR_MSBUILD   = 'E:\\$tools\\SonarScannerMSBuild\\SonarScanner.MSBuild.exe'
+                MSBUILD_EXE     = 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\MSBuild\\Current\\Bin\\MSBuild.exe'
+                VSTEST_EXE      = 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\Common7\\IDE\\Extensions\\TestPlatform\\vstest.console.exe'
+                NUGET_EXE       = 'E:\\$tools\\nuget\\nuget.exe'
+                SOLUTION_FILE   = 'Tawuniya.Crm.sln'
+                NUGET_SOURCE    = 'https://nexus.tawuniya.com/repository/nuget-proxy/'
+                JAVA_HOME       = 'E:\\jdk-21'
+                PATH            = "${JAVA_HOME}\\bin;${env.PATH}"
+            }
+
+            steps {
+                script {
+                    withSonarQubeEnv('SonarQube') {
+                        bat """
+"%SONAR_MSBUILD%" begin ^
+/key:"Tawuniya-CRM" ^
+/name:"Tawuniya-CRM" ^
+/version:"${params.Project_Version}-${env.BUILD_NUMBER}" ^
+/d:sonar.branch.name="${params.BRANCH_NAME}" ^
+/d:sonar.sourceEncoding=UTF-8 ^
+/d:sonar.tsql.file.suffixes=.sql,.tsql ^
+/d:sonar.plsql.file.suffixes=.pks,.pkb ^
+/d:sonar.plsqlopen.file.suffixes=.pkg,.trg,.vw,.fnc,.prc ^
+/d:sonar.cs.vstest.reportsPaths="TestResults\\*.trx" ^
+/d:sonar.scanner.skip.ssl.verification=true ^
+/d:sonar.scanner.skipJreProvisioning=true
+"""
+
+                        bat """
+"%NUGET_EXE%" restore "%SOLUTION_FILE%" ^
+-Source "%NUGET_SOURCE%" ^
+-Verbosity detailed ^
+-NonInteractive ^
+-DisableParallelProcessing
+"""
+
+                        bat """
+"%MSBUILD_EXE%" "%SOLUTION_FILE%" ^
+/t:Restore ^
+/p:Configuration=Release ^
+/p:RestoreSources="%NUGET_SOURCE%"
+"""
+
+                        bat """
+if not exist "..\\Assemblies" mkdir "..\\Assemblies"
+xcopy /Y "Assemblies\\*.dll" "..\\Assemblies\\"
+xcopy /Y "Assemblies\\*.xml" "..\\Assemblies\\"
+
+if not exist "BatchJobs\\Tawuniya.Crm.BatchJobs.CreateTicketsEvaluationInstances\\bin\\Debug" mkdir "BatchJobs\\Tawuniya.Crm.BatchJobs.CreateTicketsEvaluationInstances\\bin\\Debug"
+
+copy /Y "packages\\Serilog.4.2.0\\lib\\net462\\Serilog.dll" "BatchJobs\\Tawuniya.Crm.BatchJobs.CreateTicketsEvaluationInstances\\bin\\Debug\\"
+copy /Y "packages\\Serilog.Sinks.Console.6.0.0\\lib\\net462\\Serilog.Sinks.Console.dll" "BatchJobs\\Tawuniya.Crm.BatchJobs.CreateTicketsEvaluationInstances\\bin\\Debug\\"
+copy /Y "packages\\Serilog.Sinks.File.7.0.0\\lib\\net462\\Serilog.Sinks.File.dll" "BatchJobs\\Tawuniya.Crm.BatchJobs.CreateTicketsEvaluationInstances\\bin\\Debug\\"
+"""
+
+                        bat """
+"%MSBUILD_EXE%" "%SOLUTION_FILE%" ^
+/t:Rebuild ^
+/p:Configuration=Release ^
+/p:RestorePackages=false
+"""
+
+                        bat """
+if exist TestResults rmdir /S /Q TestResults
+mkdir TestResults
+
+"%VSTEST_EXE%" "VeriTouch.CRM.VTBL\\VeriTouch.CRM.VTBL.UnitTests\\bin\\Release\\VeriTouch.CRM.VTBL.UnitTests.dll" /Logger:trx /ResultsDirectory:TestResults
+"""
+
+                        bat '"%SONAR_MSBUILD%" end'
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            agent { label 'SonarQube' }
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Scan completed for ${params.BRANCH_NAME}"
+        }
+    }
+}
