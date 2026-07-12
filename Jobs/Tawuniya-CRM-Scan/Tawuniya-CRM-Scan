@@ -84,6 +84,7 @@ pipeline {
 
                         bat """
 if not exist "..\\Assemblies" mkdir "..\\Assemblies"
+
 xcopy /Y "Assemblies\\*.dll" "..\\Assemblies\\"
 xcopy /Y "Assemblies\\*.xml" "..\\Assemblies\\"
 
