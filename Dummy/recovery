@@ -1,0 +1,605 @@
+pipeline {
+    agent { label 'built-in' }
+    environment {
+        EPIC_CONTENT = '' // Placeholder for the environment variable
+        EMAIL_RECIPIENTS = 'devopsteam@tawuniya.com, alertnotificationlist@tawuniya.com, asqa-tools@tawuniya.com, SOudaoud@tawuniya.com, FAlhafi@tawuniya.com, DMAlanazi@tawuniya.com, MHMohammed@tawuniya.com, ccco@tawuniya.com'
+        EMAIL_SUBJECT = "Deployment Notification: $JOB_BASE_NAME #${BUILD_NUMBER}"
+        APPLICATION_NAME = 'RECOVERY-PORTAL'
+        APPLICATION_URL = 'https://www.tawuniya.com/recovery-portal'
+    }
+
+    stages {
+        stage('Read Epic File') {
+            steps {
+                script {
+                    // Read the contents of epic.txt into the EPIC_CONTENT variable
+                    EPIC_CONTENT = readFile('E:/Jenkins/Home/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3/epic.txt').trim()
+                    
+                    // Print the contents of the file to the Jenkins console log for debugging
+                    echo "EPIC_CONTENT:\n${EPIC_CONTENT}"
+                }
+            }
+        }
+        
+        stage('Send Start Email') {
+            agent { label 'built-in' }
+            steps {
+                script {
+                    emailext (
+                        to: "${EMAIL_RECIPIENTS}",
+                        subject: "${EMAIL_SUBJECT} - Started",
+                        body: """\
+                        <!DOCTYPE html>
+                        <html lang="en">
+                        <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                            <style>
+                                body {
+                                    font-family: Arial, sans-serif;
+                                    line-height: 1.6;
+                                }
+                                .container {
+                                    padding: 20px;
+                                    border: 1px solid #e0e0e0;
+                                    border-radius: 8px;
+                                    background-color: #f9f9f9;
+                                    width: 600px;
+                                    margin: auto;
+                                }
+                                h2 {
+                                    color: #2c3e50;
+                                }
+                                p {
+                                    color: #34495e;
+                                }
+                                .details {
+                                    background-color: #ecf0f1;
+                                    padding: 10px;
+                                    border-radius: 6px;
+                                    margin-bottom: 20px;
+                                }
+                                .footer {
+                                    font-size: 12px;
+                                    color: #7f8c8d;
+                                    margin-top: 20px;
+                                }
+                                .btn {
+                                    display: inline-block;
+                                    padding: 10px 15px;
+                                    background-color: #3498db;
+                                    color: white;
+                                    text-decoration: none;
+                                    border-radius: 5px;
+                                    margin-top: 20px;
+                                }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="container">
+                                <h2>Deployment Notification</h2>
+                                <p>Dears,</p>
+                                <p>We are pleased to inform you that a deployment of ${APPLICATION_NAME} is started as follows:</p>
+
+                                <div class="details">
+                                    <p><strong>Environment:</strong> Production</p>
+                                    <p><strong>EPIC:</strong> ${EPIC_CONTENT}</p>
+                                    <p><strong>Deployment Date-Time:</strong> ${BUILD_TIMESTAMP}</p>
+                                    <p><strong>Affected Services:</strong> ${APPLICATION_URL}</p>
+                                </div>
+                                <p>Please be advised that this deployment may cause temporary service disruptions. We sincerely apologize for any inconvenience this may cause and appreciate your understanding as we work to improve our services.</p>
+                                <div class="footer">
+                                    <p>Thank you for your cooperation.</p>
+                                    <p><strong>Best regards,</strong><br>The DevOps Team</p>
+                                </div>
+                            </div>
+                        </body>
+                        </html>
+                        """,
+                        mimeType: 'text/html',
+                        recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                    )
+                }
+            }
+        }
+        
+        stage("Copy WAR") {
+            agent { label 'built-in' }
+            steps {
+                dir('E:/Jenkins/Home/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3/') {
+                    stash includes: "**/*",
+                          name: "Build_stash"
+                }
+            }
+        }
+        
+        stage("Paste DIG-PRD-93") {
+            agent { label 'DIG-PRD-93' }
+            steps {
+                // 🔥 Clean the deployment workspace before pasting
+                sh '''
+                    DEPLOY_DIR="/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo rm -rf "$DEPLOY_DIR"/*
+                '''
+
+                // ⬇️ Unstash to local folder
+                dir("DH-RECOVERY-PORTAL-V3") {
+                    unstash "Build_stash"
+                }
+            }
+        }
+        
+        stage("Paste DIG-PRD-94") {
+            agent { label 'DIG-PRD-94' }
+            steps {
+                // 🔥 Clean the deployment workspace before pasting
+                sh '''
+                    DEPLOY_DIR="/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo rm -rf "$DEPLOY_DIR"/*
+                '''
+
+                // ⬇️ Unstash to local folder
+                dir("DH-RECOVERY-PORTAL-V3") {
+                    unstash "Build_stash"
+                }
+            }
+        }
+        
+        stage("Paste DIG-PRD-95") {
+            agent { label 'DIG-PRD-95' }
+            steps {
+                // 🔥 Clean the deployment workspace before pasting
+                sh '''
+                    DEPLOY_DIR="/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo rm -rf "$DEPLOY_DIR"/*
+                '''
+
+                // ⬇️ Unstash to local folder
+                dir("DH-RECOVERY-PORTAL-V3") {
+                    unstash "Build_stash"
+                }
+            }
+        }
+        
+        stage("Paste DIG-PRD-96") {
+            agent { label 'DIG-PRD-96' }
+            steps {
+                // 🔥 Clean the deployment workspace before pasting
+                sh '''
+                    DEPLOY_DIR="/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo rm -rf "$DEPLOY_DIR"/*
+                '''
+
+                // ⬇️ Unstash to local folder
+                dir("DH-RECOVERY-PORTAL-V3") {
+                    unstash "Build_stash"
+                }
+            }
+        }
+        
+        stage("Paste DIG-PRD-97") {
+            agent { label 'DIG-PRD-97' }
+            steps {
+                // 🔥 Clean the deployment workspace before pasting
+                sh '''
+                    DEPLOY_DIR="/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo rm -rf "$DEPLOY_DIR"/*
+                '''
+
+                // ⬇️ Unstash to local folder
+                dir("DH-RECOVERY-PORTAL-V3") {
+                    unstash "Build_stash"
+                }
+            }
+        }
+        
+        stage("Paste DIG-PRD-99") {
+            agent { label 'DIG-PRD-99' }
+            steps {
+                // 🔥 Clean the deployment workspace before pasting
+                sh '''
+                    DEPLOY_DIR="/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo rm -rf "$DEPLOY_DIR"/*
+                '''
+
+                // ⬇️ Unstash to local folder
+                dir("DH-RECOVERY-PORTAL-V3") {
+                    unstash "Build_stash"
+                }
+            }
+        }
+        
+        stage("Deploy DIG-PRD-93") {
+            agent { label 'DIG-PRD-93' }
+            steps {
+                // 🔨 Build with NPM
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                '''
+
+                // 🗃️ Prepare deployment target
+                sh '''
+                    cd /u01
+                    sudo rm -rf recovery-portal
+                    sleep 1
+                    sudo mkdir recovery-portal
+                    sleep 1
+                    sudo cp /u01/config/wp-pm2.config.js /u01/recovery-portal
+                    
+                '''
+
+                // 📦 Copy built project to deployment dir
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo cp -R . /u01/recovery-portal
+                                        
+                '''
+            }
+        }
+        
+        stage("Deploy DIG-PRD-94") {
+            agent { label 'DIG-PRD-94' }
+            steps {
+                // 🔨 Build with NPM
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                '''
+
+                // 🗃️ Prepare deployment target
+                sh '''
+                    cd /u01
+                    sudo rm -rf recovery-portal
+                    sleep 1
+                    sudo mkdir recovery-portal
+                    sleep 1
+                    sudo cp /u01/config/wp-pm2.config.js /u01/recovery-portal
+                '''
+
+                // 📦 Copy built project to deployment dir
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo cp -R . /u01/recovery-portal
+                    
+                    
+                '''
+            }
+        }
+        
+        stage("Deploy DIG-PRD-95") {
+            agent { label 'DIG-PRD-95' }
+            steps {
+                // 🔨 Build with NPM
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                '''
+
+                // 🗃️ Prepare deployment target
+                sh '''
+                    cd /u01
+                    sudo rm -rf recovery-portal
+                    sleep 1
+                    sudo mkdir recovery-portal
+                    sleep 1
+                    sudo cp /u01/config/wp-pm2.config.js /u01/recovery-portal
+                '''
+
+                // 📦 Copy built project to deployment dir
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo cp -R . /u01/recovery-portal
+                    
+                '''
+            }
+        }
+        
+        stage("Deploy DIG-PRD-96") {
+            agent { label 'DIG-PRD-96' }
+            steps {
+                // 🔨 Build with NPM
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                '''
+
+                // 🗃️ Prepare deployment target
+                sh '''
+                    cd /u01
+                    sudo rm -rf recovery-portal
+                    sleep 1
+                    sudo mkdir recovery-portal
+                    sleep 1
+                    sudo cp /u01/config/wp-pm2.config.js /u01/recovery-portal
+                '''
+
+                // 📦 Copy built project to deployment dir
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo cp -R . /u01/recovery-portal
+                    
+                    
+                '''
+            }
+        }
+        
+        stage("Deploy DIG-PRD-97") {
+            agent { label 'DIG-PRD-97' }
+            steps {
+                // 🔨 Build with NPM
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                '''
+
+                // 🗃️ Prepare deployment target
+                sh '''
+                    cd /u01
+                    sudo rm -rf recovery-portal
+                    sleep 1
+                    sudo mkdir recovery-portal
+                    sleep 1
+                    sudo cp /u01/config/wp-pm2.config.js /u01/recovery-portal
+                '''
+
+                // 📦 Copy built project to deployment dir
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo cp -R . /u01/recovery-portal
+                    
+                    
+                '''
+            }
+        }
+        
+        stage("Deploy DIG-PRD-99") {
+            agent { label 'DIG-PRD-99' }
+            steps {
+                // 🔨 Build with NPM
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                '''
+
+                // 🗃️ Prepare deployment target
+                sh '''
+                    cd /u01
+                    sudo rm -rf recovery-portal
+                    sleep 1
+                    sudo mkdir recovery-portal
+                    sleep 1
+                    sudo cp /u01/config/wp-pm2.config.js /u01/recovery-portal
+                '''
+
+                // 📦 Copy built project to deployment dir
+                sh '''
+                    cd "/home/appadm/jenkins/workspace/DXP/PROD/DH-RECOVERY-PORTAL-V3-Deploy/DH-RECOVERY-PORTAL-V3"
+                    sudo cp -R . /u01/recovery-portal
+                                        
+                '''
+            }
+        }
+        
+        stage("Restart DIG-PRD-93") {
+            agent { label 'DIG-PRD-93' }
+            steps {
+                // 🔐 Set ownership
+                sh '''
+                    sudo chown -R appadm:appadm /u01/recovery-portal
+                '''
+                
+                // 🔐 Set permissions
+                sh '''
+                    sudo chmod -R 755 /u01/recovery-portal/*
+                '''
+                
+                // 🔁 Terminate any existing PM2 processes
+                sh '''
+                    sudo /usr/local/bin/pm2 delete recovery-portal || true
+                '''
+
+                // 🚀 Start and configure PM2
+                sh '''
+                    cd /u01/recovery-portal
+                    cp .env.prod .env
+                    sudo rm -f .env.production
+                    sudo mv eslint.config.mjs eslint.config.mjs_bak
+                    sudo NEXT_PUBLIC_SKIP_LINT=true DISABLE_ESLINT_PLUGIN=true npm run build -- --no-lint
+                    sudo mv eslint.config.mjs_bak eslint.config.mjs
+                    sudo /usr/local/bin/pm2 start wp-pm2.config.js --only recovery-portal
+                    sudo /usr/local/bin/pm2 startup
+                    sudo /usr/local/bin/pm2 save
+                '''
+            }
+        }
+        
+        stage("Restart DIG-PRD-94") {
+            agent { label 'DIG-PRD-94' }
+            steps {
+                // 🔐 Set ownership
+                sh '''
+                    sudo chown -R appadm:appadm /u01/recovery-portal
+                '''
+                
+                // 🔐 Set permissions
+                sh '''
+                    sudo chmod -R 755 /u01/recovery-portal/*
+                '''
+                
+                // 🔁 Terminate any existing PM2 processes
+                sh '''
+                    sudo /usr/local/bin/pm2 delete recovery-portal || true
+                '''
+
+                // 🚀 Start and configure PM2
+                sh '''
+                    cd /u01/recovery-portal
+                    cp .env.prod .env
+                    sudo rm -f .env.production
+                    sudo mv eslint.config.mjs eslint.config.mjs_bak
+                    sudo NEXT_PUBLIC_SKIP_LINT=true DISABLE_ESLINT_PLUGIN=true npm run build -- --no-lint
+                    sudo mv eslint.config.mjs_bak eslint.config.mjs
+                    sudo /usr/local/bin/pm2 start wp-pm2.config.js --only recovery-portal
+                    sudo /usr/local/bin/pm2 startup
+                    sudo /usr/local/bin/pm2 save
+                '''
+            }
+        }
+        
+        stage("Restart DIG-PRD-95") {
+            agent { label 'DIG-PRD-95' }
+            steps {
+                // 🔐 Set ownership
+                sh '''
+                    sudo chown -R appadm:appadm /u01/recovery-portal
+                '''
+                
+                // 🔐 Set permissions
+                sh '''
+                    sudo chmod -R 755 /u01/recovery-portal/*
+                '''
+                
+                // 🔁 Terminate any existing PM2 processes
+                sh '''
+                    sudo /usr/local/bin/pm2 delete recovery-portal || true
+                '''
+
+                // 🚀 Start and configure PM2
+                sh '''
+                    cd /u01/recovery-portal
+                    cp .env.prod .env
+                    sudo rm -f .env.production
+                    sudo mv eslint.config.mjs eslint.config.mjs_bak
+                    sudo NEXT_PUBLIC_SKIP_LINT=true DISABLE_ESLINT_PLUGIN=true npm run build -- --no-lint
+                    sudo mv eslint.config.mjs_bak eslint.config.mjs
+                    sudo /usr/local/bin/pm2 start wp-pm2.config.js --only recovery-portal
+                    sudo /usr/local/bin/pm2 startup
+                    sudo /usr/local/bin/pm2 save
+                '''
+            }
+        }
+        
+        stage("Restart DIG-PRD-96") {
+            agent { label 'DIG-PRD-96' }
+            steps {
+                // 🔐 Set ownership
+                sh '''
+                    sudo chown -R appadm:appadm /u01/recovery-portal
+                '''
+                
+                // 🔐 Set permissions
+                sh '''
+                    sudo chmod -R 755 /u01/recovery-portal/*
+                '''
+                
+                // 🔁 Terminate any existing PM2 processes
+                sh '''
+                    sudo /usr/local/bin/pm2 delete recovery-portal || true
+                '''
+
+                // 🚀 Start and configure PM2
+                sh '''
+                    cd /u01/recovery-portal
+                    cp .env.prod .env
+                    sudo rm -f .env.production
+                    sudo mv eslint.config.mjs eslint.config.mjs_bak
+                    sudo NEXT_PUBLIC_SKIP_LINT=true DISABLE_ESLINT_PLUGIN=true npm run build -- --no-lint
+                    sudo mv eslint.config.mjs_bak eslint.config.mjs
+                    sudo /usr/local/bin/pm2 start wp-pm2.config.js --only recovery-portal
+                    sudo /usr/local/bin/pm2 startup
+                    sudo /usr/local/bin/pm2 save
+                '''
+            }
+        }
+        
+        stage("Restart DIG-PRD-97") {
+            agent { label 'DIG-PRD-97' }
+            steps {
+                // 🔐 Set ownership
+                sh '''
+                    sudo chown -R appadm:appadm /u01/recovery-portal
+                '''
+                
+                // 🔐 Set permissions
+                sh '''
+                    sudo chmod -R 755 /u01/recovery-portal/*
+                '''
+                
+                // 🔁 Terminate any existing PM2 processes
+                sh '''
+                    sudo /usr/local/bin/pm2 delete recovery-portal || true
+                '''
+
+                // 🚀 Start and configure PM2
+                sh '''
+                    cd /u01/recovery-portal
+                    cp .env.prod .env
+                    sudo rm -f .env.production
+                    sudo mv eslint.config.mjs eslint.config.mjs_bak
+                    sudo NEXT_PUBLIC_SKIP_LINT=true DISABLE_ESLINT_PLUGIN=true npm run build -- --no-lint
+                    sudo mv eslint.config.mjs_bak eslint.config.mjs
+                    sudo /usr/local/bin/pm2 start wp-pm2.config.js --only recovery-portal
+                    sudo /usr/local/bin/pm2 startup
+                    sudo /usr/local/bin/pm2 save
+                '''
+            }
+        }
+        
+        stage("Restart DIG-PRD-99") {
+            agent { label 'DIG-PRD-99' }
+            steps {
+                // 🔐 Set ownership
+                sh '''
+                    sudo chown -R appadm:appadm /u01/recovery-portal
+                '''
+                
+                // 🔐 Set permissions
+                sh '''
+                    sudo chmod -R 755 /u01/recovery-portal/*
+                '''
+                
+                // 🔁 Terminate any existing PM2 processes
+                sh '''
+                    sudo /usr/local/bin/pm2 delete recovery-portal || true
+                '''
+
+                // 🚀 Start and configure pm2
+                sh '''
+                    cd /u01/recovery-portal
+                    cp .env.prod .env
+                    sudo rm -f .env.production
+                    sudo mv eslint.config.mjs eslint.config.mjs_bak
+                    sudo NEXT_PUBLIC_SKIP_LINT=true DISABLE_ESLINT_PLUGIN=true npm run build -- --no-lint
+                    sudo mv eslint.config.mjs_bak eslint.config.mjs
+                    sudo /usr/local/bin/pm2 start wp-pm2.config.js --only recovery-portal
+                    sudo /usr/local/bin/pm2 startup
+                    sudo /usr/local/bin/pm2 save
+                '''
+            }
+        }
+    }
+    
+    post {
+        success {
+            script {
+                emailext (
+                    to: "${EMAIL_RECIPIENTS}",
+                    subject: "${EMAIL_SUBJECT} - Success",
+                    body: """\
+                    <p>Build Job: "$JOB_BASE_NAME"</p>
+                    <p>Status: The Job "$JOB_BASE_NAME" Has Successfully Deployed</p>
+                    """,
+                    recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                )
+            }
+        }
+        failure {
+            script {
+                emailext (
+                    to: "${EMAIL_RECIPIENTS}",
+                    subject: "${EMAIL_SUBJECT} - Failed",
+                    body: """\
+                    <p>Build Job: "$JOB_BASE_NAME"</p>
+                    <p>Status: The Job "$JOB_BASE_NAME" Has Failed</p>
+                    """,
+                    recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                )
+            }
+        }
+    }
+}
