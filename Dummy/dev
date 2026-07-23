@@ -1,90 +1,48 @@
-@Library('Tawuniya-lib@main') _
+@echo off
+setlocal EnableDelayedExpansion
 
-pipeline {
-  agent none
+REM --- Step 1: Kill stuck processes ---
+echo [0/4] Killing stuck processes...
+taskkill /F /IM node.exe /T 2>nul
+taskkill /F /IM vite.exe /T 2>nul
 
-  parameters {
-    string(name: 'EPIC', defaultValue: '', description: 'Use a Valid Jira Epic Number')
-  }
+REM --- Step 2: Configure Environment ---
+echo [1/4] Configuring Environment...
+set NX_PLUGIN_NO_TIMEOUTS=true
+set NX_DAEMON=false
+set NX_VERBOSE_LOGGING=true
+set CI=true
+set NX_TUI=false
+set NODE_OPTIONS=--max-old-space-size=8192
 
-  environment {
-    BRANCH_NAME = 'PROD'
-    NODE_TLS_REJECT_UNAUTHORIZED = '0'
-    GIT_SSL_NO_VERIFY = 'true'
-  }
+REM --- Step 3: Clean ---
+echo [2/4] Cleaning...
+if exist package-lock.json del /f /q package-lock.json
+if exist .nx rmdir /s /q .nx 2>nul
+call npm cache clean --force
 
-  stages {
-    stage('Build + Scan') {
-      steps {
-        script {
-          reactBuildScan(
-            epic: params.EPIC,
-            branch: env.BRANCH_NAME,
-            lob: 'DXP',
-            buildAgent: 'built-in',
-            secretScanningAgent: 'built-in',
-            sonarAgent: 'SonarQube',
+REM --- Step 4: Install with error check ---
+echo [3/4] Installing...
+call npm install --legacy-peer-deps
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] npm install failed with code %ERRORLEVEL%. Aborting build.
+    exit /b %ERRORLEVEL%
+)
 
-            bbs: [
-              credentialsId: 'Admin_Bitbucket',
-              id: '75b95ed8-28cb-489d-b2fd-a56ac6b6f2ae',
-              projectName: 'DXP',
-              repositoryName: 'recovery-portal',
-              remoteName: 'recovery-portal',
-              serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
-            ],
+REM --- Step 5: Build with error check ---
+echo [4/4] Building...
+call npx nx reset
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] nx reset failed with code %ERRORLEVEL%. Aborting build.
+    exit /b %ERRORLEVEL%
+)
 
-            app: [
-              path: '.',
-              packageFile: 'package.json'
-            ],
+echo ^> Starting Build with NO TIMEOUTS...
+call npx nx build aamal --configuration=prod --verbose
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] nx build failed with code %ERRORLEVEL%.
+    exit /b %ERRORLEVEL%
+)
 
-            node: [
-  installCmd: '''
-    if exist node_modules rmdir /s /q node_modules
-    if exist .next rmdir /s /q .next
-    npm install --cpu=x64
-  ''',
-
-  buildCmd: 'npm run build',
-
-  testCoverageCmd: '''
-    if not exist reports mkdir reports
-    npx vitest run --coverage --passWithNoTests ^
-      --coverage.reporter=lcov ^
-      --coverage.reporter=text ^
-      --reporter=default ^
-      --reporter=junit ^
-      --outputFile.junit=reports/junit.xml
-  '''
-],
-
-            artifacts: [
-              path: '.next/**'
-            ],
-
-            sonar: [
-              projectKey: 'DH-RECOVERY-PORTAL-V3',
-
-              mainGate: 'Quality Gate-Tawuniya',
-              prGate: 'Refactor Gate',
-
-              sources: '.',
-              tests: '.',
-
-              inclusions: '**/*.ts,**/*.tsx,**/*.js,**/*.jsx',
-              testInclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx',
-
-              tsconfigPaths: 'tsconfig.json',
-              lcovReportPath: 'coverage/lcov.info',
-
-              exclusions: '**/*.map,**/node_modules/**,**/.next/**,**/coverage/**,**/reports/**,**/*.ttf,**/*.otf,**/*.woff,**/*.woff2,**/*.gif,**/*.svg',
-              coverageExclusions: '**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.d.ts,**/public/**',
-              cpdExclusions: ''
-            ]
-          )
-        }
-      }
-    }
-  }
-}
+echo ^> Build completed successfully.
+endlocal
