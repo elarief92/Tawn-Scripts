@@ -90,6 +90,10 @@ pipeline {
         EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
         EMAIL_SUBJECT = 'API Deployment'
         APPLICATION_NAME = 'webMethods API'
+
+        DEPLOYMENT_APPROVER = ''
+        APPROVER_COMMENT = ''
+        ROLLBACK_REQUIRED = 'false'
     }
 
     stages {
@@ -348,19 +352,19 @@ pipeline {
         stage('Create Snapshot') {
             steps {
                 script {
-                    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                        if (!fileExists(env.DEPLOYER_CMD)) {
-                            error("Deployer command not found: ${env.DEPLOYER_CMD}")
-                        }
+                    if (!fileExists(env.DEPLOYER_CMD)) {
+                        error("Deployer command not found: ${env.DEPLOYER_CMD}")
+                    }
 
-                        withCredentials([
-                            usernamePassword(
-                                credentialsId: 'IS_Target_Preprod',
-                                usernameVariable: 'DEPLOYER_USER',
-                                passwordVariable: 'DEPLOYER_PWD'
-                            )
-                        ]) {
-                            sh '''
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'IS_Target_Preprod',
+                            usernameVariable: 'DEPLOYER_USER',
+                            passwordVariable: 'DEPLOYER_PWD'
+                        )
+                    ]) {
+                        def snapshotStatus = sh(
+                            script: '''
                                 chmod +x "${DEPLOYER_CMD}" || true
 
                                 "${DEPLOYER_CMD}" --checkpoint \
@@ -370,14 +374,47 @@ pipeline {
                                     -port "${DEPLOYER_PORT}" \
                                     -user "${DEPLOYER_USER}" \
                                     -pwd "${DEPLOYER_PWD}"
-                            '''
+                            ''',
+                            returnStatus: true
+                        )
+
+                        if (snapshotStatus != 0) {
+                            error("Snapshot creation failed with exit code ${snapshotStatus}. Deployment cannot continue.")
                         }
                     }
 
-                    if (currentBuild.currentResult == 'FAILURE') {
-                        NEED_ROLLBACK = true
-                        echo 'Create Snapshot failed. Rollback will be triggered.'
+                    echo 'Snapshot created successfully.'
+                }
+            }
+        }
+
+        stage('Approval Before Deployment') {
+            steps {
+                script {
+                    timeout(time: 30, unit: 'MINUTES') {
+                        def approval = input(
+                            message: """Confirm PROD deployment?
+
+EPIC: ${params.EPIC_NAME}
+Targets: ${getSelected(params.TARGET_SCOPE).join(', ')}
+Packages: ${getSelected(params.PACKAGES_TO_BUILD).join(', ')}""",
+                            ok: 'Deploy Now',
+                            submitterParameter: 'DEPLOYMENT_APPROVER',
+                            parameters: [
+                                string(
+                                    name: 'APPROVER_COMMENT',
+                                    defaultValue: '',
+                                    description: 'Deployment reason / approval comment'
+                                )
+                            ]
+                        )
+
+                        env.DEPLOYMENT_APPROVER = approval.DEPLOYMENT_APPROVER
+                        env.APPROVER_COMMENT = approval.APPROVER_COMMENT
                     }
+
+                    echo "Deployment approved by: ${env.DEPLOYMENT_APPROVER}"
+                    echo "Approval comment: ${env.APPROVER_COMMENT ?: 'N/A'}"
                 }
             }
         }
@@ -385,15 +422,15 @@ pipeline {
         stage('Deploy Candidate') {
             steps {
                 script {
-                    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                        withCredentials([
-                            usernamePassword(
-                                credentialsId: 'IS_Target_Preprod',
-                                usernameVariable: 'DEPLOYER_USER',
-                                passwordVariable: 'DEPLOYER_PWD'
-                            )
-                        ]) {
-                            sh '''
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'IS_Target_Preprod',
+                            usernameVariable: 'DEPLOYER_USER',
+                            passwordVariable: 'DEPLOYER_PWD'
+                        )
+                    ]) {
+                        def deployStatus = sh(
+                            script: '''
                                 "${DEPLOYER_CMD}" --deploy \
                                     -project "${EPIC_NAME}" \
                                     -dc "${EPIC_NAME}" \
@@ -402,15 +439,23 @@ pipeline {
                                     -user "${DEPLOYER_USER}" \
                                     -pwd "${DEPLOYER_PWD}" \
                                     -force
-                            '''
-                        }
-                    }
+                            ''',
+                            returnStatus: true
+                        )
 
-                    if (currentBuild.currentResult == 'FAILURE') {
-                        NEED_ROLLBACK = true
-                        echo 'Deployment failed. Rollback will be triggered.'
-                    } else {
-                        echo 'Deployment succeeded.'
+                        if (deployStatus != 0) {
+                            NEED_ROLLBACK = true
+                            env.ROLLBACK_REQUIRED = 'true'
+
+                            catchError(
+                                buildResult: 'FAILURE',
+                                stageResult: 'FAILURE'
+                            ) {
+                                error("Deployment failed with exit code ${deployStatus}. Automatic rollback will be executed.")
+                            }
+                        } else {
+                            echo 'Deployment succeeded.'
+                        }
                     }
                 }
             }
@@ -425,7 +470,10 @@ pipeline {
 
             steps {
                 script {
-                    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    catchError(
+                        buildResult: 'FAILURE',
+                        stageResult: 'FAILURE'
+                    ) {
                         withCredentials([
                             usernamePassword(
                                 credentialsId: 'IS_Target_Preprod',
@@ -434,7 +482,7 @@ pipeline {
                             )
                         ]) {
                             sh '''
-                                echo "Rollback started for project: ${EPIC_NAME}"
+                                echo "Automatic rollback started for project: ${EPIC_NAME}"
 
                                 chmod +x "${DEPLOYER_CMD}" || true
 
@@ -446,7 +494,7 @@ pipeline {
                                     -user "${DEPLOYER_USER}" \
                                     -pwd "${DEPLOYER_PWD}"
 
-                                echo "Rollback completed."
+                                echo "Automatic rollback completed."
                             '''
                         }
                     }
@@ -483,7 +531,7 @@ pipeline {
             script {
                 sendDeploymentEmail(
                     'Success',
-                    '#2b2626',
+                    '#27ae60',
                     "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:",
                     getSelected(params.TARGET_SCOPE).join(', ')
                 )
@@ -494,8 +542,19 @@ pipeline {
             script {
                 sendDeploymentEmail(
                     'Failed',
-                    '#2b2626',
+                    '#c0392b',
                     "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:",
+                    getSelected(params.TARGET_SCOPE).join(', ')
+                )
+            }
+        }
+
+        aborted {
+            script {
+                sendDeploymentEmail(
+                    'Aborted',
+                    '#7f8c8d',
+                    "The PROD deployment approval was aborted or timed out. Deployment was not executed.",
                     getSelected(params.TARGET_SCOPE).join(', ')
                 )
             }
@@ -544,6 +603,9 @@ def sendDeploymentEmail(status, color, message, targetServers) {
                             <p><strong>Target Servers:</strong> ${targetServers ?: 'N/A'}</p>
                             <p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
                             <p><strong>Packages:</strong> ${getSelected(params.PACKAGES_TO_BUILD).join(', ')}</p>
+                            <p><strong>Deployment Approver:</strong> ${env.DEPLOYMENT_APPROVER ?: 'N/A'}</p>
+                            <p><strong>Approval Comment:</strong> ${env.APPROVER_COMMENT ?: 'N/A'}</p>
+                            <p><strong>Rollback Required:</strong> ${env.ROLLBACK_REQUIRED}</p>
                             <p><strong>Status:</strong> ${status}</p>
                             <p><strong>Deployment Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
                             <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
