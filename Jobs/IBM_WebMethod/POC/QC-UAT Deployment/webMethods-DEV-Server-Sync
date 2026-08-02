@@ -1,0 +1,238 @@
+properties([
+    parameters([
+        string(name: 'EPIC_NAME', defaultValue: '', description: 'Use a Valid Jira Epic Number'),
+        [$class: 'ChoiceParameter', choiceType: 'PT_SINGLE_SELECT', name: 'SOURCE_SERVER', description: 'Select the authoritative DEV server', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["PREPROD_APP01"]'], script: [classpath: [], sandbox: true, script: 'return ["PREPROD_APP01", "PREPROD_APP02"]']]]
+    ])
+])
+
+def SYNC_CHANGES = false
+def PULL_REQUEST_URL = ''
+
+pipeline {
+    agent { label 'SAG-PREP-IPP02' }
+
+    options {
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '5'))
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        ENVIRONMENT_NAME = 'DEV'
+        TARGET_BRANCH = 'DEV_CICD'
+        SERVER_SSH_USER = 'apiadmin'
+        SERVER_PACKAGE_ROOT = '/sag/dbp1011/IntegrationServer/instances/default/packages'
+        BITBUCKET_URL = 'https://bitbucket.tawn.com'
+        BITBUCKET_PROJECT = 'EI'
+        BITBUCKET_REPOSITORY = 'webmethods-source-code'
+        GIT_REMOTE = 'webmethods-source-code'
+        SYNC_DIRECTORY = "${WORKSPACE}/.server_sync"
+    }
+
+    stages {
+        stage('Validate Input') {
+            steps {
+                script {
+                    if (!params.EPIC_NAME?.trim()) {
+                        error('EPIC_NAME is required')
+                    }
+
+                    if (!(params.EPIC_NAME ==~ /[A-Za-z0-9._-]+/)) {
+                        error('EPIC_NAME may contain only letters, numbers, dot, underscore and hyphen')
+                    }
+
+                    def sourceHost = getSourceServerHost(params.SOURCE_SERVER)
+                    def syncBranch = "server-sync/DEV/${params.EPIC_NAME}-${env.BUILD_NUMBER}"
+
+                    currentBuild.displayName = "SYNC-${params.EPIC_NAME}"
+                    currentBuild.description = "SOURCE=${params.SOURCE_SERVER} | HOST=${sourceHost} | TARGET=${env.TARGET_BRANCH} | SYNC=${syncBranch}"
+                }
+            }
+        }
+
+        stage('Checkout Repository') {
+            steps {
+                deleteDir()
+
+                bbs_checkout(
+                    branches: [[name: "*/${env.TARGET_BRANCH}"]],
+                    credentialsId: 'Admin_Bitbucket',
+                    id: '06c55797-80ad-4cb9-bea7-299d2a91506e',
+                    projectName: 'EI',
+                    repositoryName: 'webmethods-source-code',
+                    serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+                )
+            }
+        }
+
+        stage('Get Package List') {
+            steps {
+                sh 'set -e; test -d IS || { echo "ERROR: IS directory not found"; exit 1; }; find IS -mindepth 1 -maxdepth 1 -type d -printf "%f\\n" | sort > packages-to-sync.txt; test -s packages-to-sync.txt || { echo "ERROR: No packages found under IS"; exit 1; }'
+            }
+        }
+
+        stage('Synchronize Packages') {
+            steps {
+                script {
+                    def sourceHost = getSourceServerHost(params.SOURCE_SERVER)
+                    def packages = readFile('packages-to-sync.txt').readLines().collect { it.trim() }.findAll { it }
+
+                    if (packages.isEmpty()) {
+                        error('No packages found to synchronize')
+                    }
+
+                    packages.each { pkg ->
+                        if (!(pkg ==~ /[A-Za-z0-9._-]+/)) {
+                            error("Invalid package name: ${pkg}")
+                        }
+                    }
+
+                    sh 'rm -rf "${SYNC_DIRECTORY}" && mkdir -p "${SYNC_DIRECTORY}"'
+
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'IS_Server_SSH',
+                            usernameVariable: 'SSH_CREDENTIAL_USER',
+                            passwordVariable: 'SSH_PASSWORD'
+                        )
+                    ]) {
+                        def remote = [name: params.SOURCE_SERVER.toString(), host: sourceHost, user: env.SERVER_SSH_USER, password: env.SSH_PASSWORD, allowAnyHosts: true, timeoutSec: 30]
+                        def packageChecks = packages.collect { pkg -> "if [ -d '${env.SERVER_PACKAGE_ROOT}/${pkg}' ]; then echo '${pkg}'; fi" }.join('; ')
+
+                        sshCommand(remote: remote, command: "test -d '${env.SERVER_PACKAGE_ROOT}'")
+
+                        def existingPackages = sshCommand(remote: remote, command: packageChecks).readLines().collect { it.trim() }.findAll { it }
+
+                        if (existingPackages.isEmpty()) {
+                            error("No approved packages found on ${params.SOURCE_SERVER}")
+                        }
+
+                        writeFile(file: 'synchronized-packages.txt', text: "${existingPackages.join('\n')}\n", encoding: 'UTF-8')
+
+                        def remoteArchive = "/tmp/jenkins-sync-${env.BUILD_NUMBER}.tar.gz"
+                        def localArchive = "${env.SYNC_DIRECTORY}/packages.tar.gz"
+                        def packageArguments = existingPackages.collect { "'${it}'" }.join(' ')
+
+                        try {
+                            sshCommand(remote: remote, command: "set -e; rm -f '${remoteArchive}'; tar -C '${env.SERVER_PACKAGE_ROOT}' --exclude='*.log' --exclude='*.tmp' --exclude='*.lck' --exclude='*/logs/*' --exclude='*/cache/*' --exclude='*/temp/*' -czf '${remoteArchive}' ${packageArguments}; test -s '${remoteArchive}'")
+                            sshGet(remote: remote, from: remoteArchive, into: localArchive, override: true)
+                        } finally {
+                            sshCommand(remote: remote, command: "rm -f '${remoteArchive}'", failOnError: false)
+                        }
+
+                        sh 'set -e; test -f "${SYNC_DIRECTORY}/packages.tar.gz" || { echo "ERROR: Archive not downloaded"; exit 1; }; tar -xzf "${SYNC_DIRECTORY}/packages.tar.gz" -C "${SYNC_DIRECTORY}"; while IFS= read -r PACKAGE_NAME; do [ -n "${PACKAGE_NAME}" ] || continue; test -d "${SYNC_DIRECTORY}/${PACKAGE_NAME}" || { echo "ERROR: ${PACKAGE_NAME} not extracted"; exit 1; }; rm -rf "${WORKSPACE}/IS/${PACKAGE_NAME}"; mkdir -p "${WORKSPACE}/IS/${PACKAGE_NAME}"; cp -a "${SYNC_DIRECTORY}/${PACKAGE_NAME}/." "${WORKSPACE}/IS/${PACKAGE_NAME}/"; done < synchronized-packages.txt; rm -f "${SYNC_DIRECTORY}/packages.tar.gz"'
+                    }
+                }
+            }
+        }
+
+        stage('Detect Changes') {
+            steps {
+                script {
+                    SYNC_CHANGES = sh(script: 'git status --porcelain -- IS', returnStdout: true).trim() ? true : false
+
+                    if (SYNC_CHANGES) {
+                        sh 'git status --short -- IS; git diff --stat -- IS'
+                    }
+                }
+            }
+        }
+
+        stage('Commit And Push') {
+            when {
+                expression {
+                    SYNC_CHANGES
+                }
+            }
+
+            steps {
+                script {
+                    def syncBranch = "server-sync/DEV/${params.EPIC_NAME}-${env.BUILD_NUMBER}"
+
+                    sh "set -e; git checkout -b '${syncBranch}'; git config user.name 'Jenkins webMethods Sync'; git config user.email 'jenkins@tawuniya.com'; git add -A -- IS; if git diff --cached --quiet; then echo 'ERROR: No staged changes found'; exit 1; fi; git commit -m 'Sync DEV server changes for ${params.EPIC_NAME}'"
+
+                    withCredentials([
+                        gitUsernamePassword(
+                            credentialsId: 'Admin_Bitbucket',
+                            gitToolName: 'Default'
+                        )
+                    ]) {
+                        sh "git push '${env.GIT_REMOTE}' 'HEAD:refs/heads/${syncBranch}'"
+                    }
+                }
+            }
+        }
+
+        stage('Create Pull Request') {
+            when {
+                expression {
+                    SYNC_CHANGES
+                }
+            }
+
+            steps {
+                script {
+                    def syncBranch = "server-sync/DEV/${params.EPIC_NAME}-${env.BUILD_NUMBER}"
+
+                    def payload = [
+                        title: "Server sync ${params.EPIC_NAME} from ${params.SOURCE_SERVER}",
+                        description: "Synchronize approved business packages from ${params.SOURCE_SERVER} into ${env.TARGET_BRANCH}. Jenkins build: ${env.BUILD_URL}",
+                        state: 'OPEN',
+                        open: true,
+                        closed: false,
+                        fromRef: [id: "refs/heads/${syncBranch}", repository: [slug: env.BITBUCKET_REPOSITORY, project: [key: env.BITBUCKET_PROJECT]]],
+                        toRef: [id: "refs/heads/${env.TARGET_BRANCH}", repository: [slug: env.BITBUCKET_REPOSITORY, project: [key: env.BITBUCKET_PROJECT]]]
+                    ]
+
+                    writeJSON(file: 'pull-request.json', json: payload)
+
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'Admin_Bitbucket',
+                            usernameVariable: 'BITBUCKET_USER',
+                            passwordVariable: 'BITBUCKET_PWD'
+                        )
+                    ]) {
+                        sh 'curl --fail --silent --show-error --user "${BITBUCKET_USER}:${BITBUCKET_PWD}" --header "Content-Type: application/json" --data @pull-request.json "${BITBUCKET_URL}/rest/api/1.0/projects/${BITBUCKET_PROJECT}/repos/${BITBUCKET_REPOSITORY}/pull-requests" > pull-request-response.json'
+                    }
+
+                    def response = readJSON(file: 'pull-request-response.json', returnPojo: true)
+
+                    if (!response.id) {
+                        error('Pull request ID was not returned by Bitbucket')
+                    }
+
+                    PULL_REQUEST_URL = "${env.BITBUCKET_URL}/projects/${env.BITBUCKET_PROJECT}/repos/${env.BITBUCKET_REPOSITORY}/pull-requests/${response.id}/overview"
+
+                    echo "Pull request: ${PULL_REQUEST_URL}"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                if (SYNC_CHANGES) {
+                    echo "Review and merge: ${PULL_REQUEST_URL}"
+                }
+            }
+        }
+
+        always {
+            sh 'rm -rf "${SYNC_DIRECTORY}" || true'
+        }
+    }
+}
+
+def getSourceServerHost(serverName) {
+    def sourceServers = ['PREPROD_APP01': '10.7.248.74', 'PREPROD_APP02': '10.7.248.75']
+    def selectedServer = serverName?.toString()?.trim()
+    def sourceHost = sourceServers[selectedServer]
+
+    if (!sourceHost) {
+        error("Unsupported SOURCE_SERVER: ${selectedServer}")
+    }
+
+    sourceHost.toString()
+}
