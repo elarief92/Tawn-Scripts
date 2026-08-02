@@ -37,9 +37,6 @@ pipeline {
                         error('EPIC_NAME is required')
                     }
 
-                    if (!(params.EPIC_NAME ==~ /[A-Za-z0-9._-]+/)) {
-                        error('EPIC_NAME may contain only letters, numbers, dot, underscore and hyphen')
-                    }
 
                     def sourceHost = getSourceServerHost(params.SOURCE_SERVER)
                     def syncBranch = "server-sync/DEV/${params.EPIC_NAME}-${env.BUILD_NUMBER}"
@@ -79,12 +76,6 @@ pipeline {
 
                     if (packages.isEmpty()) {
                         error('No packages found to synchronize')
-                    }
-
-                    packages.each { pkg ->
-                        if (!(pkg ==~ /[A-Za-z0-9._-]+/)) {
-                            error("Invalid package name: ${pkg}")
-                        }
                     }
 
                     sh 'rm -rf "${SYNC_DIRECTORY}" && mkdir -p "${SYNC_DIRECTORY}"'
