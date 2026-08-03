@@ -1,7 +1,9 @@
 properties([
     parameters([
         string(name: 'EPIC_NAME', defaultValue: '', description: 'Use a Valid Jira Epic Number'),
+
         [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select DEV target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["PREPROD_APP01"]'], script: [classpath: [], sandbox: true, script: 'return ["PREPROD_APP01", "PREPROD_APP02"]']]],
+
         [
             $class: 'ChoiceParameter',
             choiceType: 'PT_CHECKBOX',
@@ -38,7 +40,6 @@ properties([
 
 def CHANGED_PACKAGES = []
 def SELECTED_TARGETS = []
-def NEED_ROLLBACK = false
 
 pipeline {
     agent { label 'SAG-PREP-IPP02' }
@@ -52,24 +53,33 @@ pipeline {
     environment {
         ENVIRONMENT_NAME = 'DEV'
         BRANCH_NAME = 'DEV_CICD'
+
         SAG_HOME = '/sag/be1015'
         JAVA_HOME = '/sag/be1015/jvm/jvm'
+
         ABE_BUILD_FILE = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
         DEPLOYER_BIN = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
         PROJECT_AUTOMATOR = "${DEPLOYER_BIN}/projectautomatorUnix.sh"
         DEPLOYER_CMD = "${DEPLOYER_BIN}/Deployer.sh"
+
         TEMP_SRC = "${WORKSPACE}/.tmp_build_src"
         BUILD_OUTPUT_DIR = "${WORKSPACE}/build_output"
         GENERATED_DIR = "${WORKSPACE}/generated"
         GENERATED_XML = "${WORKSPACE}/generated/Deployment_ProjectAutomator.xml"
         BUILD_LOG_FILE = "${WORKSPACE}/generated/abe-build.log"
+
         TEMPLATE_XML = '01-deployer/templates/ProjectAutomator.Repository.template.xml'
+
         DEPLOYER_HOST = '127.0.0.1'
         DEPLOYER_PORT = '5555'
         REPO_ALIAS = 'BuildRepo'
+
         EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
         EMAIL_SUBJECT = 'API Deployment'
         APPLICATION_NAME = 'webMethods API'
+
+        NEED_ROLLBACK = 'false'
+        ROLLBACK_REQUIRED = 'false'
     }
 
     stages {
@@ -112,7 +122,12 @@ pipeline {
         stage('Send Start Email') {
             steps {
                 script {
-                    sendDeploymentEmail('Started', '#2b2626', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been started as follows:")
+                    sendDeploymentEmail(
+                        'Started',
+                        '#2b2626',
+                        "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been started as follows:",
+                        getSelected(params.TARGET_SCOPE).join(', ')
+                    )
                 }
             }
         }
@@ -123,6 +138,7 @@ pipeline {
                     echo "Environment selected: ${env.ENVIRONMENT_NAME}"
                     echo "Branch selected for checkout: ${env.BRANCH_NAME}"
                     echo "Running on Jenkins agent: ${env.NODE_NAME}"
+
                     deleteDir()
 
                     bbs_checkout(
@@ -154,24 +170,38 @@ pipeline {
             }
         }
 
+        stage('Validate Tools') {
+            steps {
+                script {
+                    def abeCommand = "${env.SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh"
+                    def javaCommand = "${env.JAVA_HOME}/bin/java"
+
+                    if (!fileExists(abeCommand)) {
+                        error("ABE build command not found: ${abeCommand}")
+                    }
+
+                    if (!fileExists(env.ABE_BUILD_FILE)) {
+                        error("ABE build file not found: ${env.ABE_BUILD_FILE}")
+                    }
+
+                    if (!fileExists(javaCommand)) {
+                        error("Java executable not found: ${javaCommand}")
+                    }
+
+                    if (!fileExists(env.PROJECT_AUTOMATOR)) {
+                        error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}")
+                    }
+
+                    if (!fileExists(env.DEPLOYER_CMD)) {
+                        error("Deployer command not found: ${env.DEPLOYER_CMD}")
+                    }
+                }
+            }
+        }
+
         stage('Clean Existing Deployer Project') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')]) {
-                    sh '''
-                        echo "Cleaning existing Deployer resources for project: ${EPIC_NAME}"
-                        chmod +x "${DEPLOYER_CMD}" || true
-
-                        "${DEPLOYER_CMD}" --delete -project "${EPIC_NAME}" -dc "${EPIC_NAME}" \
-                            -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" \
-                            -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}" || true
-
-                        "${DEPLOYER_CMD}" --delete -project "${EPIC_NAME}" \
-                            -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" \
-                            -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}" || true
-
-                        echo "Cleanup completed."
-                    '''
-                }
+                cleanExistingDeployerProject()
             }
         }
 
@@ -202,8 +232,10 @@ pipeline {
             steps {
                 sh '''
                     set -o pipefail
+
                     export PATH=$JAVA_HOME/bin:$PATH
                     unset CLASSPATH
+
                     export ANT_OPTS="-Xms2g -Xmx16g -XX:+UseG1GC"
                     export JAVA_OPTS="-Xms2g -Xmx16g -XX:+UseG1GC"
                     export _JAVA_OPTIONS="-Xms2g -Xmx16g -XX:+UseG1GC"
@@ -241,79 +273,24 @@ pipeline {
         stage('Generate Project Automator XML') {
             steps {
                 script {
-                    def targets = getTargetConfigs(SELECTED_TARGETS)
-                    def names = buildNames(params.EPIC_NAME)
-                    def xml = readFile(file: env.TEMPLATE_XML, encoding: 'UTF-8')
-
-                    xml = xml.replace('@DEPLOYER_HOST_PORT@', "${env.DEPLOYER_HOST}:${env.DEPLOYER_PORT}")
-                    xml = xml.replace('@PROJECT_NAME@', names.PROJECT_NAME)
-                    xml = xml.replace('@PROJECT_DESC@', names.PROJECT_DESC)
-                    xml = xml.replace('@DEPLOYMENT_SET_NAME@', names.DEPLOYMENT_SET_NAME)
-                    xml = xml.replace('@DEPLOYMENT_MAP_NAME@', names.DEPLOYMENT_MAP_NAME)
-                    xml = xml.replace('@CANDIDATE_NAME@', names.CANDIDATE_NAME)
-                    xml = xml.replace('@REPO_ALIAS@', env.REPO_ALIAS)
-                    xml = xml.replace('@REPO_DIRECTORY@', env.BUILD_OUTPUT_DIR)
-                    xml = xml.replace('@IS_ALIASES@', buildISAliases(targets))
-                    xml = xml.replace('@MAP_TARGET_ALIASES@', buildMapTargetAliases(targets))
-                    xml = xml.replace('@DEPLOYMENT_ENTRIES@', buildRepositoryEntries(CHANGED_PACKAGES, env.REPO_ALIAS))
-
-                    writeFile(file: env.GENERATED_XML, text: xml, encoding: 'UTF-8')
-                    echo "Generated XML: ${env.GENERATED_XML}"
-                    echo 'XML generated successfully. Content hidden to avoid exposing credentials.'
+                    generateProjectAutomatorXml(
+                        CHANGED_PACKAGES,
+                        SELECTED_TARGETS
+                    )
                 }
             }
         }
 
         stage('Create Deployer Project') {
             steps {
-                script {
-                    if (!fileExists(env.GENERATED_XML)) {
-                        error("Generated Project Automator XML not found: ${env.GENERATED_XML}")
-                    }
-
-                    if (!fileExists(env.PROJECT_AUTOMATOR)) {
-                        error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}")
-                    }
-                }
-
-                withCredentials([
-                    usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD'),
-                    usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'IS_USER', passwordVariable: 'IS_PWD')
-                ]) {
-                    sh '''
-                        sed -i "s|\\${DEPLOYER_USER}|${DEPLOYER_USER}|g" "${GENERATED_XML}"
-                        sed -i "s|\\${DEPLOYER_PWD}|${DEPLOYER_PWD}|g" "${GENERATED_XML}"
-                        sed -i "s|\\${IS_USER}|${IS_USER}|g" "${GENERATED_XML}"
-                        sed -i "s|\\${IS_PWD}|${IS_PWD}|g" "${GENERATED_XML}"
-                        chmod +x "${PROJECT_AUTOMATOR}" || true
-                        "${PROJECT_AUTOMATOR}" "${GENERATED_XML}"
-                    '''
-                }
+                createDeployerProject()
             }
         }
 
         stage('Create Snapshot') {
             steps {
                 script {
-                    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                        if (!fileExists(env.DEPLOYER_CMD)) {
-                            error("Deployer command not found: ${env.DEPLOYER_CMD}")
-                        }
-
-                        withCredentials([usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')]) {
-                            sh '''
-                                chmod +x "${DEPLOYER_CMD}" || true
-                                "${DEPLOYER_CMD}" --checkpoint -dc "${EPIC_NAME}" -project "${EPIC_NAME}" \
-                                    -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" \
-                                    -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}"
-                            '''
-                        }
-                    }
-
-                    if (currentBuild.currentResult == 'FAILURE') {
-                        NEED_ROLLBACK = true
-                        echo 'Create Snapshot failed. Rollback will be triggered.'
-                    }
+                    createSnapshot()
                 }
             }
         }
@@ -321,62 +298,40 @@ pipeline {
         stage('Deploy Candidate') {
             steps {
                 script {
-                    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                        withCredentials([usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')]) {
-                            sh '''
-                                "${DEPLOYER_CMD}" --deploy -project "${EPIC_NAME}" -dc "${EPIC_NAME}" \
-                                    -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" \
-                                    -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}" -force
-                            '''
-                        }
-                    }
+                    def deployFailed = deployCandidate()
 
-                    if (currentBuild.currentResult == 'FAILURE') {
-                        NEED_ROLLBACK = true
-                        echo 'Deployment failed. Rollback will be triggered.'
-                    } else {
-                        echo 'Deployment succeeded.'
+                    if (deployFailed) {
+                        env.NEED_ROLLBACK = 'true'
+                        env.ROLLBACK_REQUIRED = 'true'
                     }
                 }
             }
         }
 
         stage('Rollback If Needed') {
-            when { expression { NEED_ROLLBACK == true } }
-            steps {
-                script {
-                    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                        withCredentials([usernamePassword(credentialsId: 'IS_Target_Preprod', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')]) {
-                            sh '''
-                                echo "Rollback started for project: ${EPIC_NAME}"
-                                chmod +x "${DEPLOYER_CMD}" || true
-                                "${DEPLOYER_CMD}" --rollback -project "${EPIC_NAME}" -dc "${EPIC_NAME}" \
-                                    -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" \
-                                    -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}"
-                                echo "Rollback completed."
-                            '''
-                        }
-                    }
+            when {
+                expression {
+                    env.NEED_ROLLBACK == 'true'
                 }
+            }
+
+            steps {
+                rollbackDeployment()
             }
         }
 
         stage('Zip Build Output') {
             steps {
-                sh '''
-                    cd "${WORKSPACE}"
-                    if [ -d build_output ]; then
-                        zip -r build_output.zip build_output
-                    else
-                        echo "build_output directory not found. Skipping zip."
-                    fi
-                '''
+                zipBuildOutput()
             }
         }
 
         stage('Archive Artifacts') {
             steps {
-                archiveArtifacts(artifacts: 'generated/*.xml, generated/*.log, build_output.zip', allowEmptyArchive: true)
+                archiveArtifacts(
+                    artifacts: 'generated/*.log, build_output.zip',
+                    allowEmptyArchive: true
+                )
             }
         }
     }
@@ -384,13 +339,23 @@ pipeline {
     post {
         success {
             script {
-                sendDeploymentEmail('Success', '#2b2626', "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:")
+                sendDeploymentEmail(
+                    'Success',
+                    '#27ae60',
+                    "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:",
+                    getSelected(params.TARGET_SCOPE).join(', ')
+                )
             }
         }
 
         failure {
             script {
-                sendDeploymentEmail('Failed', '#2b2626', "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:")
+                sendDeploymentEmail(
+                    'Failed',
+                    '#c0392b',
+                    "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:",
+                    getSelected(params.TARGET_SCOPE).join(', ')
+                )
             }
         }
 
@@ -400,7 +365,219 @@ pipeline {
     }
 }
 
-def sendDeploymentEmail(status, color, message) {
+def cleanExistingDeployerProject() {
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'IS_Target_Preprod',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        sh '''
+            echo "Cleaning existing Deployer resources for project: ${EPIC_NAME}"
+
+            chmod +x "${DEPLOYER_CMD}" || true
+
+            "${DEPLOYER_CMD}" --delete \
+                -project "${EPIC_NAME}" \
+                -dc "${EPIC_NAME}" \
+                -host "${DEPLOYER_HOST}" \
+                -port "${DEPLOYER_PORT}" \
+                -user "${DEPLOYER_USER}" \
+                -pwd "${DEPLOYER_PWD}" || true
+
+            "${DEPLOYER_CMD}" --delete \
+                -project "${EPIC_NAME}" \
+                -host "${DEPLOYER_HOST}" \
+                -port "${DEPLOYER_PORT}" \
+                -user "${DEPLOYER_USER}" \
+                -pwd "${DEPLOYER_PWD}" || true
+
+            echo "Cleanup completed."
+        '''
+    }
+}
+
+def generateProjectAutomatorXml(packages, selectedTargets) {
+    def targets = getTargetConfigs(selectedTargets)
+    def names = buildNames(params.EPIC_NAME)
+    def xml = readFile(file: env.TEMPLATE_XML, encoding: 'UTF-8')
+
+    xml = xml.replace('@DEPLOYER_HOST_PORT@', "${env.DEPLOYER_HOST}:${env.DEPLOYER_PORT}")
+    xml = xml.replace('@PROJECT_NAME@', names.PROJECT_NAME)
+    xml = xml.replace('@PROJECT_DESC@', names.PROJECT_DESC)
+    xml = xml.replace('@DEPLOYMENT_SET_NAME@', names.DEPLOYMENT_SET_NAME)
+    xml = xml.replace('@DEPLOYMENT_MAP_NAME@', names.DEPLOYMENT_MAP_NAME)
+    xml = xml.replace('@CANDIDATE_NAME@', names.CANDIDATE_NAME)
+    xml = xml.replace('@REPO_ALIAS@', env.REPO_ALIAS)
+    xml = xml.replace('@REPO_DIRECTORY@', env.BUILD_OUTPUT_DIR)
+    xml = xml.replace('@IS_ALIASES@', buildISAliases(targets))
+    xml = xml.replace('@MAP_TARGET_ALIASES@', buildMapTargetAliases(targets))
+    xml = xml.replace('@DEPLOYMENT_ENTRIES@', buildRepositoryEntries(packages, env.REPO_ALIAS))
+
+    writeFile(
+        file: env.GENERATED_XML,
+        text: xml,
+        encoding: 'UTF-8'
+    )
+
+    echo "Generated XML: ${env.GENERATED_XML}"
+    echo 'XML generated successfully. Content hidden to avoid exposing credentials.'
+}
+
+def createDeployerProject() {
+    if (!fileExists(env.GENERATED_XML)) {
+        error("Generated Project Automator XML not found: ${env.GENERATED_XML}")
+    }
+
+    if (!fileExists(env.PROJECT_AUTOMATOR)) {
+        error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}")
+    }
+
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'IS_Target_Preprod',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        ),
+        usernamePassword(
+            credentialsId: 'IS_Target_Preprod',
+            usernameVariable: 'IS_USER',
+            passwordVariable: 'IS_PWD'
+        )
+    ]) {
+        sh '''
+            sed -i "s|\\${DEPLOYER_USER}|${DEPLOYER_USER}|g" "${GENERATED_XML}"
+            sed -i "s|\\${DEPLOYER_PWD}|${DEPLOYER_PWD}|g" "${GENERATED_XML}"
+            sed -i "s|\\${IS_USER}|${IS_USER}|g" "${GENERATED_XML}"
+            sed -i "s|\\${IS_PWD}|${IS_PWD}|g" "${GENERATED_XML}"
+
+            chmod +x "${PROJECT_AUTOMATOR}" || true
+            "${PROJECT_AUTOMATOR}" "${GENERATED_XML}"
+        '''
+    }
+}
+
+def createSnapshot() {
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'IS_Target_Preprod',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        def snapshotStatus = sh(
+            script: '''
+                chmod +x "${DEPLOYER_CMD}" || true
+
+                "${DEPLOYER_CMD}" --checkpoint \
+                    -dc "${EPIC_NAME}" \
+                    -project "${EPIC_NAME}" \
+                    -host "${DEPLOYER_HOST}" \
+                    -port "${DEPLOYER_PORT}" \
+                    -user "${DEPLOYER_USER}" \
+                    -pwd "${DEPLOYER_PWD}"
+            ''',
+            returnStatus: true
+        )
+
+        if (snapshotStatus != 0) {
+            error("Snapshot creation failed with exit code ${snapshotStatus}. Deployment cannot continue.")
+        }
+
+        echo 'Snapshot created successfully.'
+    }
+}
+
+def deployCandidate() {
+    def deploymentFailed = false
+
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'IS_Target_Preprod',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        def deployStatus = sh(
+            script: '''
+                "${DEPLOYER_CMD}" --deploy \
+                    -project "${EPIC_NAME}" \
+                    -dc "${EPIC_NAME}" \
+                    -host "${DEPLOYER_HOST}" \
+                    -port "${DEPLOYER_PORT}" \
+                    -user "${DEPLOYER_USER}" \
+                    -pwd "${DEPLOYER_PWD}" \
+                    -force
+            ''',
+            returnStatus: true
+        )
+
+        if (deployStatus != 0) {
+            deploymentFailed = true
+
+            catchError(
+                buildResult: 'FAILURE',
+                stageResult: 'FAILURE'
+            ) {
+                error("Deployment failed with exit code ${deployStatus}. Automatic rollback will be executed.")
+            }
+        } else {
+            echo 'Deployment succeeded.'
+        }
+    }
+
+    deploymentFailed
+}
+
+def rollbackDeployment() {
+    script {
+        catchError(
+            buildResult: 'FAILURE',
+            stageResult: 'FAILURE'
+        ) {
+            withCredentials([
+                usernamePassword(
+                    credentialsId: 'IS_Target_Preprod',
+                    usernameVariable: 'DEPLOYER_USER',
+                    passwordVariable: 'DEPLOYER_PWD'
+                )
+            ]) {
+                sh '''
+                    echo "Automatic rollback started for project: ${EPIC_NAME}"
+
+                    chmod +x "${DEPLOYER_CMD}" || true
+
+                    "${DEPLOYER_CMD}" --rollback \
+                        -project "${EPIC_NAME}" \
+                        -dc "${EPIC_NAME}" \
+                        -host "${DEPLOYER_HOST}" \
+                        -port "${DEPLOYER_PORT}" \
+                        -user "${DEPLOYER_USER}" \
+                        -pwd "${DEPLOYER_PWD}"
+
+                    echo "Automatic rollback completed."
+                '''
+            }
+        }
+    }
+}
+
+def zipBuildOutput() {
+    sh '''
+        cd "${WORKSPACE}"
+
+        rm -f build_output.zip
+
+        if [ -d build_output ]; then
+            zip -r build_output.zip build_output
+        else
+            echo "build_output directory not found. Skipping zip."
+        fi
+    '''
+}
+
+def sendDeploymentEmail(status, color, message, targetServers) {
     emailext(
         to: "${env.EMAIL_RECIPIENTS}",
         subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status}",
@@ -413,7 +590,7 @@ def sendDeploymentEmail(status, color, message) {
                 <meta charset="UTF-8">
                 <style>
                     body { font-family: Arial, sans-serif; background: #f4f4f4; color: #333; }
-                    .container { width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0, 0, 0, .1); }
+                    .container { width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,.1); }
                     .header { background: ${color}; color: #fff; padding: 18px; text-align: center; font-size: 22px; font-weight: bold; }
                     .content { padding: 20px; }
                     .details { background: #ecf0f1; padding: 15px; border-radius: 6px; margin: 20px 0; }
@@ -427,19 +604,23 @@ def sendDeploymentEmail(status, color, message) {
                     <div class="content">
                         <p>Dears,</p>
                         <p>${message}</p>
+
                         <div class="details">
                             <p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
                             <p><strong>Environment:</strong> ${env.ENVIRONMENT_NAME}</p>
                             <p><strong>Jenkins Agent:</strong> ${env.NODE_NAME}</p>
-                            <p><strong>Target Servers:</strong> ${SELECTED_TARGETS.join(', ')}</p>
+                            <p><strong>Target Servers:</strong> ${targetServers ?: 'N/A'}</p>
                             <p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
                             <p><strong>Packages:</strong> ${getSelected(params.PACKAGES_TO_BUILD).join(', ')}</p>
+                            <p><strong>Rollback Required:</strong> ${env.ROLLBACK_REQUIRED}</p>
                             <p><strong>Status:</strong> ${status}</p>
                             <p><strong>Deployment Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
                             <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
                         </div>
+
                         <p>Please be advised accordingly.</p>
                     </div>
+
                     <div class="footer">
                         <p>Thank you for your cooperation.</p>
                         <p><strong>Best regards,</strong><br>The DevOps Team</p>
@@ -467,8 +648,10 @@ def buildNames(epic) {
     ]
 }
 
-def buildRepositoryEntries(pkgs, repoAlias) {
-    pkgs.collect { """<Composite name="${it}" srcAlias="${repoAlias}" type="IS"/>""" }.join('\n')
+def buildRepositoryEntries(packages, repositoryAlias) {
+    packages.collect {
+        """<Composite name="${it}" srcAlias="${repositoryAlias}" type="IS"/>"""
+    }.join('\n')
 }
 
 def buildISAliases(targets) {
@@ -486,12 +669,15 @@ def buildISAliases(targets) {
 }
 
 def buildMapTargetAliases(targets) {
-    targets.collect { """<alias type="IS">${it.alias}</alias>""" }.join('\n')
+    targets.collect {
+        """<alias type="IS">${it.alias}</alias>"""
+    }.join('\n')
 }
 
 def getTargetConfigs(serverNames) {
     def targetConfigMap = [
-        'PREPROD_APP01': [alias: 'PREPROD_APP01', host: '10.7.248.74', port: '5555'], 'PREPROD_APP02': [alias: 'PREPROD_APP02', host: '10.7.248.75', port: '5555']
+        'PREPROD_APP01': [alias: 'PREPROD_APP01', host: '10.7.248.74', port: '5555'],
+        'PREPROD_APP02': [alias: 'PREPROD_APP02', host: '10.7.248.75', port: '5555']
     ]
 
     serverNames.each { targetName ->
@@ -500,5 +686,7 @@ def getTargetConfigs(serverNames) {
         }
     }
 
-    serverNames.collect { targetConfigMap[it] }
+    serverNames.collect {
+        targetConfigMap[it]
+    }
 }
