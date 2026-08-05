@@ -1,0 +1,272 @@
+pipeline {
+    agent none
+
+    options {
+        skipDefaultCheckout(true)
+        timestamps()
+    }
+
+    parameters {
+        choice(
+            name: 'BRANCH_NAME',
+            choices: ['DEV', 'QC', 'UAT', 'PROD'],
+            description: 'Select the branch to scan'
+        )
+
+        string(
+            name: 'Project_Version',
+            defaultValue: '1.0.0',
+            description: 'Enter the version for this analysis'
+        )
+    }
+
+    environment {
+        MSBUILD_EXE =
+            'C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\MSBuild\\Current\\Bin\\MSBuild.exe'
+
+        SONAR_MSBUILD =
+            'E:\\$tools\\SonarScannerMSBuild\\SonarScanner.MSBuild.exe'
+
+        SONAR_USER_HOME =
+            'E:\\.sonar_cache'
+
+        SOLUTION_FILE =
+            'Tawuniya.Crm.sln'
+
+        NUGET_SOURCE =
+            'https://nexus.tawuniya.com/repository/nuget-proxy/index.json'
+
+        NUGET_CERT_REVOCATION_MODE =
+            'offline'
+
+        EMAIL_RECIPIENT =
+            'melarief@tawuniya.com'
+    }
+
+    stages {
+        stage('Checkout') {
+            agent {
+                label 'CRM-SQL-UAT'
+            }
+
+            steps {
+                script {
+                    currentBuild.displayName =
+                        "#${BUILD_NUMBER}-${params.BRANCH_NAME}"
+                }
+
+                cleanWs(
+                    deleteDirs: true,
+                    disableDeferredWipeout: true,
+                    notFailBuild: true
+                )
+
+                withEnv([
+                    'PATH+GIT=C:\\Program Files\\Git\\cmd;C:\\Program Files\\Git\\bin'
+                ]) {
+                    bat 'git --version'
+
+                    git(
+                        credentialsId: 'Admin_Bitbucket',
+                        url: 'https://bitbucket.tawn.com/scm/mscrm/tawuniya-crm.git',
+                        branch: "${params.BRANCH_NAME}"
+                    )
+                }
+            }
+        }
+
+        stage('Restore + Build + Sonar') {
+            agent {
+                label 'CRM-SQL-UAT'
+            }
+
+            environment {
+                JAVA_HOME =
+                    'E:\\jdk-21'
+
+                NUGET_CONFIG =
+                    "${WORKSPACE}\\NuGet.Jenkins.Config"
+            }
+
+            steps {
+                withEnv([
+                    'PATH+JAVA=E:\\jdk-21\\bin'
+                ]) {
+                    writeFile(
+                        file: 'NuGet.Jenkins.Config',
+                        text: '''<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="Tawuniya-Nexus"
+         value="https://nexus.tawuniya.com/repository/nuget-proxy/index.json"
+         protocolVersion="3" />
+  </packageSources>
+
+  <auditSources>
+    <clear />
+  </auditSources>
+</configuration>
+'''
+                    )
+
+                    bat(
+                        label: 'Restore Packages',
+                        script: '''
+"%MSBUILD_EXE%" "%SOLUTION_FILE%" ^
+/t:Restore ^
+/p:RestorePackagesConfig=true ^
+/p:RestoreConfigFile="%NUGET_CONFIG%" ^
+/p:RestoreSources="%NUGET_SOURCE%" ^
+/p:RestoreDisableParallel=true ^
+/p:RestoreIgnoreFailedSources=false ^
+/p:NuGetAudit=false ^
+/p:Configuration=Release ^
+/m:1 ^
+/v:normal
+'''
+                    )
+
+                    script {
+                        withSonarQubeEnv('SonarQube') {
+                            bat(
+                                label: 'Start SonarQube',
+                                script: """
+"%SONAR_MSBUILD%" begin ^
+/key:"Tawuniya-CRM" ^
+/name:"Tawuniya-CRM" ^
+/version:"${params.Project_Version}-${env.BUILD_NUMBER}" ^
+/d:sonar.branch.name="${params.BRANCH_NAME}" ^
+/d:sonar.sourceEncoding=UTF-8 ^
+/d:sonar.inclusions="Common/Tawuniya.Crm.Business/**/*.cs,Common/Tawuniya.Crm.Common/**/*.cs,CustomActions/Tawuniya.Crm.Cx.Actions/**/*.cs,CrmApi/Tawuniya.Crm.Api.Service/**/*.cs,Plugins/Tawuniya.Crm.Cx.Plugins/**/*.cs,Plugins/Tawuniya.Crm.Collection.Plugins/**/*.cs,BatchJobs/Tawuniya.Crm.GetSegmentCollection/**/*.cs,BatchJobs/Tawuniya.Crm.GetSegmentCollection.Business/**/*.cs,BatchJobs/Tawuniya.Crm.Medallia.Business/**/*.cs,BatchJobs/Tawuniya.Crm.Medallia.Triggers/**/*.cs,BatchJobs/Tawuniya.Crm.OpportunityAutoTransfer/**/*.cs,BatchJobs/Tawuniya.Crm.RMP/**/*.cs" ^
+/d:sonar.exclusions="**/.vs/**,**/bin/**,**/obj/**,**/packages/**,**/node_modules/**,**/TestResults/**,**/coverage/**" ^
+/d:sonar.scanner.skip.ssl.verification=true ^
+/d:sonar.scanner.skipJreProvisioning=true
+"""
+                            )
+
+                            bat(
+                                label: 'Prepare CRM Assemblies',
+                                script: '''
+@echo off
+
+if not exist "..\\Assemblies" mkdir "..\\Assemblies"
+
+if exist "Assemblies\\*.dll" (
+    xcopy /Y /I "Assemblies\\*.dll" "..\\Assemblies\\"
+)
+
+if exist "Assemblies\\*.xml" (
+    xcopy /Y /I "Assemblies\\*.xml" "..\\Assemblies\\"
+)
+
+set "SERILOG_DIR=BatchJobs\\Tawuniya.Crm.BatchJobs.CreateTicketsEvaluationInstances\\bin\\Debug"
+
+if not exist "%SERILOG_DIR%" mkdir "%SERILOG_DIR%"
+
+copy /Y "packages\\Serilog.4.2.0\\lib\\net462\\Serilog.dll" "%SERILOG_DIR%\\"
+if errorlevel 1 exit /b 1
+
+copy /Y "packages\\Serilog.Sinks.Console.6.0.0\\lib\\net462\\Serilog.Sinks.Console.dll" "%SERILOG_DIR%\\"
+if errorlevel 1 exit /b 1
+
+copy /Y "packages\\Serilog.Sinks.File.7.0.0\\lib\\net462\\Serilog.Sinks.File.dll" "%SERILOG_DIR%\\"
+if errorlevel 1 exit /b 1
+'''
+                            )
+
+                            bat(
+                                label: 'Build CRM Solution',
+                                script: '''
+"%MSBUILD_EXE%" "%SOLUTION_FILE%" ^
+/t:Rebuild ^
+/p:Configuration=Release ^
+/p:RestorePackages=false ^
+/m:1 ^
+/v:normal
+'''
+                            )
+
+                            bat(
+                                label: 'Complete SonarQube',
+                                script: '"%SONAR_MSBUILD%" end'
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            agent {
+                label 'SonarQube'
+            }
+
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "CRM SonarQube scan passed for ${params.BRANCH_NAME}"
+        }
+
+        failure {
+            echo "CRM SonarQube scan failed for ${params.BRANCH_NAME}"
+        }
+
+        always {
+            script {
+                String finalStatus = currentBuild.currentResult ?: 'UNKNOWN'
+
+                emailext(
+                    to: env.EMAIL_RECIPIENT,
+                    mimeType: 'text/html',
+                    subject: "Tawuniya CRM SonarQube - ${finalStatus} - ${params.BRANCH_NAME} #${env.BUILD_NUMBER}",
+                    body: """
+<html>
+<body style="font-family: Arial, sans-serif;">
+    <h2>Tawuniya CRM SonarQube Scan</h2>
+
+    <table style="border-collapse: collapse;" border="1" cellpadding="8">
+        <tr>
+            <td><strong>Status</strong></td>
+            <td>${finalStatus}</td>
+        </tr>
+        <tr>
+            <td><strong>Branch</strong></td>
+            <td>${params.BRANCH_NAME}</td>
+        </tr>
+        <tr>
+            <td><strong>Project version</strong></td>
+            <td>${params.Project_Version}-${env.BUILD_NUMBER}</td>
+        </tr>
+        <tr>
+            <td><strong>Job</strong></td>
+            <td>${env.JOB_NAME}</td>
+        </tr>
+        <tr>
+            <td><strong>Build number</strong></td>
+            <td>${env.BUILD_NUMBER}</td>
+        </tr>
+    </table>
+
+    <p>
+        <a href="${env.BUILD_URL}">
+            Open Jenkins build
+        </a>
+    </p>
+</body>
+</html>
+"""
+                )
+
+                echo "Scan completed for ${params.BRANCH_NAME}"
+            }
+        }
+    }
+}
