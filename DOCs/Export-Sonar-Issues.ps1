@@ -13,7 +13,7 @@ $Token    = "squ_82a0e98f86bf06b15d6e0c92f0b3c6d4dae5a441"
 $Branch   = "DEV"
 
 $Projects = @(
-    "MSCRM_tawuniya-crm_f6dfe0a1-bbb9-4220-bc0a-6e425dea8a74"
+    "Tawuniya-CRM"
 )
 
 $OutputDir = "C:\Users\VDR000691\Documents\Tawn-Scripts\DOCs\SonarReports"

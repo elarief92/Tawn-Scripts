@@ -38,10 +38,8 @@ pipeline {
             steps {
                 script {
                     currentBuild.displayName = "DEV-SYNC-${env.BUILD_NUMBER}"
-
                     currentBuild.description =
-                        "SOURCE=${env.SOURCE_SERVER} | " +
-                        "TARGET=${env.TARGET_BRANCH}"
+                        "SOURCE=${env.SOURCE_SERVER} | TARGET=${env.TARGET_BRANCH}"
 
                     echo "Environment: ${env.ENVIRONMENT_NAME}"
                     echo "Execution agent: ${env.NODE_NAME}"
@@ -49,7 +47,6 @@ pipeline {
                     echo "Source host: ${env.SOURCE_HOST}"
                     echo "Target branch: ${env.TARGET_BRANCH}"
                     echo "Sync branch: ${env.SYNC_BRANCH}"
-                    echo "Sync directory: ${env.SYNC_DIRECTORY}"
                 }
             }
         }
@@ -59,9 +56,7 @@ pipeline {
                 deleteDir()
 
                 bbs_checkout(
-                    branches: [
-                        [name: "*/${env.TARGET_BRANCH}"]
-                    ],
+                    branches: [[name: "*/${env.TARGET_BRANCH}"]],
                     credentialsId: 'Admin_Bitbucket',
                     id: '06c55797-80ad-4cb9-bea7-299d2a91506e',
                     projectName: 'EI',
@@ -71,7 +66,7 @@ pipeline {
             }
         }
 
-        stage('Get Tawn Packages') {
+        stage('Resolve Packages') {
             steps {
                 script {
                     withCredentials([
@@ -92,8 +87,14 @@ pipeline {
                                     -mindepth 1 \
                                     -maxdepth 1 \
                                     -type d \
+                                    ! -name 'Wm*' \
+                                    ! -name 'Wx*' \
+                                    ! -name 'Test*' \
+                                    ! -name 'Sample*' \
+                                    ! -name 'Default' \
+                                    ! -name 'MSTest' \
+                                    ! -name 'TerracottaExamples' \
                                     -printf '%f\\n' |
-                                grep '^Tawn' |
                                 sort
                             """.stripIndent().trim()
                         )
@@ -105,7 +106,7 @@ pipeline {
 
                         if (packages.isEmpty()) {
                             error(
-                                "No Tawn* packages found on " +
+                                "No business packages found on " +
                                 "${env.SOURCE_SERVER}"
                             )
                         }
@@ -123,18 +124,15 @@ pipeline {
             }
         }
 
-        stage('Download Packages') {
+        stage('Synchronize Packages') {
             steps {
                 script {
                     def packages = readPackageFile()
-
-                    def packageArguments = packages
-                        .collect { "'${it}'" }
-                        .join(' ')
+                    def packageArguments =
+                        packages.collect { "'${it}'" }.join(' ')
 
                     def remoteArchive =
-                        "/tmp/jenkins-dev-sync-" +
-                        "${env.BUILD_NUMBER}.tar.gz"
+                        "/tmp/jenkins-dev-sync-${env.BUILD_NUMBER}.tar.gz"
 
                     def localArchive =
                         "${env.SYNC_DIRECTORY}/packages.tar.gz"
@@ -149,8 +147,6 @@ pipeline {
 
                         rm -rf "${SYNC_DIRECTORY}"
                         mkdir -p "${SYNC_DIRECTORY}"
-
-                        echo "Sync directory: ${SYNC_DIRECTORY}"
                     '''
 
                     withCredentials([
@@ -209,8 +205,7 @@ pipeline {
                     sh '''
                         set -e
 
-                        test -f \
-                            "${SYNC_DIRECTORY}/packages.tar.gz"
+                        test -f "${SYNC_DIRECTORY}/packages.tar.gz"
 
                         tar -xzf \
                             "${SYNC_DIRECTORY}/packages.tar.gz" \
@@ -223,9 +218,7 @@ pipeline {
                             TARGET_PATH="${WORKSPACE}/IS/${PACKAGE_NAME}"
 
                             if [ ! -d "${SOURCE_PATH}" ]; then
-                                echo \
-                                    "ERROR: Package not extracted: " \
-                                    "${PACKAGE_NAME}"
+                                echo "ERROR: Package not extracted: ${PACKAGE_NAME}"
                                 exit 1
                             fi
 
@@ -237,19 +230,65 @@ pipeline {
                                 "${TARGET_PATH}/"
                         done < packages-to-sync.txt
 
-                        rm -f \
-                            "${SYNC_DIRECTORY}/packages.tar.gz"
+                        rm -f "${SYNC_DIRECTORY}/packages.tar.gz"
                     '''
                 }
             }
         }
+
+        stage('Remove Runtime Files') {
+    steps {
+        sh '''
+            set -e
+
+            while IFS= read -r PACKAGE_NAME; do
+                [ -n "${PACKAGE_NAME}" ] || continue
+
+                PACKAGE_PATH="${WORKSPACE}/IS/${PACKAGE_NAME}"
+
+                find "${PACKAGE_PATH}" -type f \
+                    -name '*.log' -delete
+
+                find "${PACKAGE_PATH}" -type f \
+                    -name '*.tmp' -delete
+
+                find "${PACKAGE_PATH}" -type f \
+                    -name '*.lck' -delete
+
+                find "${PACKAGE_PATH}" -type f \
+                    -name '*.lock' -delete
+
+                find "${PACKAGE_PATH}" -type f \
+                    -name '*.bak' -delete
+
+                for RUNTIME_DIR in \
+                    logs log cache temp tmp stats audit
+                do
+                    find "${PACKAGE_PATH}" \
+                        -type d \
+                        -name "${RUNTIME_DIR}" \
+                        -prune \
+                        -exec rm -rf {} +
+                done
+
+            done < packages-to-sync.txt
+        '''
+    }
+}
 
         stage('Detect Changes') {
             steps {
                 script {
                     def status = sh(
                         script: '''
-                            git status --porcelain -- IS
+                            git status --porcelain -- IS \
+                                ':(exclude)IS/Wm*/**' \
+                                ':(exclude)IS/Wx*/**' \
+                                ':(exclude)IS/Test*/**' \
+                                ':(exclude)IS/Sample*/**' \
+                                ':(exclude)IS/Default/**' \
+                                ':(exclude)IS/MSTest/**' \
+                                ':(exclude)IS/TerracottaExamples/**'
                         ''',
                         returnStdout: true
                     ).trim()
@@ -257,14 +296,29 @@ pipeline {
                     SYNC_CHANGES = status ? true : false
 
                     if (SYNC_CHANGES) {
-                        echo 'Server-to-Git differences detected.'
+                        echo 'Business package differences detected.'
 
                         sh '''
-                            git status --short -- IS
-                            git diff --stat -- IS
+                            git status --short -- IS \
+                                ':(exclude)IS/Wm*/**' \
+                                ':(exclude)IS/Wx*/**' \
+                                ':(exclude)IS/Test*/**' \
+                                ':(exclude)IS/Sample*/**' \
+                                ':(exclude)IS/Default/**' \
+                                ':(exclude)IS/MSTest/**' \
+                                ':(exclude)IS/TerracottaExamples/**'
+
+                            git diff --stat -- IS \
+                                ':(exclude)IS/Wm*/**' \
+                                ':(exclude)IS/Wx*/**' \
+                                ':(exclude)IS/Test*/**' \
+                                ':(exclude)IS/Sample*/**' \
+                                ':(exclude)IS/Default/**' \
+                                ':(exclude)IS/MSTest/**' \
+                                ':(exclude)IS/TerracottaExamples/**'
                         '''
                     } else {
-                        echo 'No server-to-Git differences detected.'
+                        echo 'No business package differences detected.'
                     }
                 }
             }
@@ -281,25 +335,26 @@ pipeline {
                 sh '''
                     set -e
 
-                    git config \
-                        user.name \
-                        "Jenkins webMethods Sync"
-
-                    git config \
-                        user.email \
-                        "jenkins@tawuniya.com"
+                    git config user.name "Jenkins webMethods Sync"
+                    git config user.email "jenkins@tawuniya.com"
 
                     git checkout -B "${SYNC_BRANCH}"
 
-                    git add -A -- IS
+                    git add -A -- IS \
+                        ':(exclude)IS/Wm*/**' \
+                        ':(exclude)IS/Wx*/**' \
+                        ':(exclude)IS/Test*/**' \
+                        ':(exclude)IS/Sample*/**' \
+                        ':(exclude)IS/Default/**' \
+                        ':(exclude)IS/MSTest/**' \
+                        ':(exclude)IS/TerracottaExamples/**'
 
                     if git diff --cached --quiet; then
-                        echo "ERROR: No staged changes found"
+                        echo "ERROR: No staged business-package changes found"
                         exit 1
                     fi
 
-                    git commit \
-                        -m "Daily DEV server synchronization"
+                    git commit -m "Daily DEV server synchronization"
                 '''
 
                 withCredentials([
@@ -339,8 +394,7 @@ pipeline {
                                 --fail \
                                 --silent \
                                 --show-error \
-                                --user \
-                                "${BITBUCKET_USER}:${BITBUCKET_PWD}" \
+                                --user "${BITBUCKET_USER}:${BITBUCKET_PWD}" \
                                 "${BITBUCKET_URL}/rest/api/1.0/projects/${BITBUCKET_PROJECT}/repos/${BITBUCKET_REPOSITORY}/pull-requests?state=OPEN&limit=100" \
                                 > open-pull-requests.json
                         '''
@@ -360,19 +414,12 @@ pipeline {
 
                     if (existingPr) {
                         OPEN_PR_FOUND = true
-
                         PULL_REQUEST_URL =
                             getPullRequestUrl(existingPr.id)
 
-                        echo(
-                            "Existing PR updated: " +
-                            "${PULL_REQUEST_URL}"
-                        )
+                        echo "Existing PR updated: ${PULL_REQUEST_URL}"
                     } else {
-                        echo(
-                            'No existing open ' +
-                            'synchronization PR found.'
-                        )
+                        echo 'No existing open synchronization PR found.'
                     }
                 }
             }
@@ -391,9 +438,12 @@ pipeline {
                         title: 'DEV Server Synchronization',
 
                         description:
-                            "Synchronize Tawn* packages from " +
+                            "Synchronize business packages from " +
                             "${env.SOURCE_SERVER} into " +
                             "${env.TARGET_BRANCH}.\n\n" +
+                            "Excluded packages: Wm*, Wx*, Test*, " +
+                            "Sample*, Default, MSTest and " +
+                            "TerracottaExamples.\n\n" +
                             "Jenkins build: ${env.BUILD_URL}",
 
                         state: 'OPEN',
@@ -403,11 +453,9 @@ pipeline {
                         fromRef: [
                             id: "refs/heads/${env.SYNC_BRANCH}",
                             repository: [
-                                slug:
-                                    env.BITBUCKET_REPOSITORY,
+                                slug: env.BITBUCKET_REPOSITORY,
                                 project: [
-                                    key:
-                                        env.BITBUCKET_PROJECT
+                                    key: env.BITBUCKET_PROJECT
                                 ]
                             ]
                         ],
@@ -415,11 +463,9 @@ pipeline {
                         toRef: [
                             id: "refs/heads/${env.TARGET_BRANCH}",
                             repository: [
-                                slug:
-                                    env.BITBUCKET_REPOSITORY,
+                                slug: env.BITBUCKET_REPOSITORY,
                                 project: [
-                                    key:
-                                        env.BITBUCKET_PROJECT
+                                    key: env.BITBUCKET_PROJECT
                                 ]
                             ]
                         ]
@@ -442,10 +488,8 @@ pipeline {
                                 --fail \
                                 --silent \
                                 --show-error \
-                                --user \
-                                "${BITBUCKET_USER}:${BITBUCKET_PWD}" \
-                                --header \
-                                "Content-Type: application/json" \
+                                --user "${BITBUCKET_USER}:${BITBUCKET_PWD}" \
+                                --header "Content-Type: application/json" \
                                 --data @pull-request.json \
                                 "${BITBUCKET_URL}/rest/api/1.0/projects/${BITBUCKET_PROJECT}/repos/${BITBUCKET_REPOSITORY}/pull-requests" \
                                 > pull-request-response.json
@@ -459,18 +503,14 @@ pipeline {
 
                     if (!response.id) {
                         error(
-                            'Pull request ID was not ' +
-                            'returned by Bitbucket'
+                            'Pull request ID was not returned by Bitbucket'
                         )
                     }
 
                     PULL_REQUEST_URL =
                         getPullRequestUrl(response.id)
 
-                    echo(
-                        "Pull request created: " +
-                        "${PULL_REQUEST_URL}"
-                    )
+                    echo "Pull request created: ${PULL_REQUEST_URL}"
                 }
             }
         }
@@ -480,18 +520,12 @@ pipeline {
         success {
             script {
                 if (!SYNC_CHANGES) {
-                    echo 'No changes found.'
+                    echo 'No business-package changes found.'
                     echo 'No branch or PR update was required.'
                 } else if (OPEN_PR_FOUND) {
-                    echo(
-                        "Existing PR updated: " +
-                        "${PULL_REQUEST_URL}"
-                    )
+                    echo "Existing PR updated: ${PULL_REQUEST_URL}"
                 } else {
-                    echo(
-                        "New PR created: " +
-                        "${PULL_REQUEST_URL}"
-                    )
+                    echo "New PR created: ${PULL_REQUEST_URL}"
                 }
             }
         }
