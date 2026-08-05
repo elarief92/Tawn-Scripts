@@ -1,9 +1,5 @@
 properties([])
 
-def SYNC_CHANGES = false
-def OPEN_PR_FOUND = false
-def PULL_REQUEST_URL = ''
-
 pipeline {
     agent { label 'SAG-PREP-IPP02' }
 
@@ -31,15 +27,30 @@ pipeline {
         GIT_REMOTE = 'webmethods-source-code'
 
         SYNC_DIRECTORY = "${WORKSPACE}/.server_sync"
+
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+        EMAIL_SUBJECT = 'webMethods DEV Server Synchronization'
+
+        PR_REVIEWER_USERNAME = 'melarief'
+
+        CHANGED_PACKAGES_FILE = "${WORKSPACE}/changed-packages.txt"
+        HTML_REPORT_FILE = "${WORKSPACE}/sync-report.html"
+
+        SYNC_CHANGES = 'false'
+        OPEN_PR_FOUND = 'false'
+        PULL_REQUEST_URL = ''
     }
 
     stages {
         stage('Set Build Information') {
             steps {
                 script {
-                    currentBuild.displayName = "DEV-SYNC-${env.BUILD_NUMBER}"
+                    currentBuild.displayName =
+                        "DEV-SYNC-${env.BUILD_NUMBER}"
+
                     currentBuild.description =
-                        "SOURCE=${env.SOURCE_SERVER} | TARGET=${env.TARGET_BRANCH}"
+                        "SOURCE=${env.SOURCE_SERVER} | " +
+                        "TARGET=${env.TARGET_BRANCH}"
 
                     echo "Environment: ${env.ENVIRONMENT_NAME}"
                     echo "Execution agent: ${env.NODE_NAME}"
@@ -56,7 +67,9 @@ pipeline {
                 deleteDir()
 
                 bbs_checkout(
-                    branches: [[name: "*/${env.TARGET_BRANCH}"]],
+                    branches: [
+                        [name: "*/${env.TARGET_BRANCH}"]
+                    ],
                     credentialsId: 'Admin_Bitbucket',
                     id: '06c55797-80ad-4cb9-bea7-299d2a91506e',
                     projectName: 'EI',
@@ -128,11 +141,14 @@ pipeline {
             steps {
                 script {
                     def packages = readPackageFile()
-                    def packageArguments =
-                        packages.collect { "'${it}'" }.join(' ')
+
+                    def packageArguments = packages
+                        .collect { "'${it}'" }
+                        .join(' ')
 
                     def remoteArchive =
-                        "/tmp/jenkins-dev-sync-${env.BUILD_NUMBER}.tar.gz"
+                        "/tmp/jenkins-dev-sync-" +
+                        "${env.BUILD_NUMBER}.tar.gz"
 
                     def localArchive =
                         "${env.SYNC_DIRECTORY}/packages.tar.gz"
@@ -237,44 +253,54 @@ pipeline {
         }
 
         stage('Remove Runtime Files') {
-    steps {
-        sh '''
-            set -e
+            steps {
+                sh '''
+                    set -e
 
-            while IFS= read -r PACKAGE_NAME; do
-                [ -n "${PACKAGE_NAME}" ] || continue
+                    while IFS= read -r PACKAGE_NAME; do
+                        [ -n "${PACKAGE_NAME}" ] || continue
 
-                PACKAGE_PATH="${WORKSPACE}/IS/${PACKAGE_NAME}"
+                        PACKAGE_PATH="${WORKSPACE}/IS/${PACKAGE_NAME}"
 
-                find "${PACKAGE_PATH}" -type f \
-                    -name '*.log' -delete
+                        find "${PACKAGE_PATH}" \
+                            -type f \
+                            -name '*.log' \
+                            -delete
 
-                find "${PACKAGE_PATH}" -type f \
-                    -name '*.tmp' -delete
+                        find "${PACKAGE_PATH}" \
+                            -type f \
+                            -name '*.tmp' \
+                            -delete
 
-                find "${PACKAGE_PATH}" -type f \
-                    -name '*.lck' -delete
+                        find "${PACKAGE_PATH}" \
+                            -type f \
+                            -name '*.lck' \
+                            -delete
 
-                find "${PACKAGE_PATH}" -type f \
-                    -name '*.lock' -delete
+                        find "${PACKAGE_PATH}" \
+                            -type f \
+                            -name '*.lock' \
+                            -delete
 
-                find "${PACKAGE_PATH}" -type f \
-                    -name '*.bak' -delete
+                        find "${PACKAGE_PATH}" \
+                            -type f \
+                            -name '*.bak' \
+                            -delete
 
-                for RUNTIME_DIR in \
-                    logs log cache temp tmp stats audit
-                do
-                    find "${PACKAGE_PATH}" \
-                        -type d \
-                        -name "${RUNTIME_DIR}" \
-                        -prune \
-                        -exec rm -rf {} +
-                done
+                        for RUNTIME_DIR in \
+                            logs log cache temp tmp stats audit
+                        do
+                            find "${PACKAGE_PATH}" \
+                                -type d \
+                                -name "${RUNTIME_DIR}" \
+                                -prune \
+                                -exec rm -rf {} +
+                        done
 
-            done < packages-to-sync.txt
-        '''
-    }
-}
+                    done < packages-to-sync.txt
+                '''
+            }
+        }
 
         stage('Detect Changes') {
             steps {
@@ -293,20 +319,28 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    SYNC_CHANGES = status ? true : false
+                    env.SYNC_CHANGES =
+                        status ? 'true' : 'false'
 
-                    if (SYNC_CHANGES) {
+                    if (env.SYNC_CHANGES == 'true') {
                         echo 'Business package differences detected.'
 
                         sh '''
-                            git status --short -- IS \
+                            git status --porcelain -- IS \
                                 ':(exclude)IS/Wm*/**' \
                                 ':(exclude)IS/Wx*/**' \
                                 ':(exclude)IS/Test*/**' \
                                 ':(exclude)IS/Sample*/**' \
                                 ':(exclude)IS/Default/**' \
                                 ':(exclude)IS/MSTest/**' \
-                                ':(exclude)IS/TerracottaExamples/**'
+                                ':(exclude)IS/TerracottaExamples/**' \
+                            | sed 's/^...//' \
+                            | awk -F/ 'NF >= 2 {print $2}' \
+                            | sort -u \
+                            > "${CHANGED_PACKAGES_FILE}"
+
+                            echo "Changed packages:"
+                            cat "${CHANGED_PACKAGES_FILE}"
 
                             git diff --stat -- IS \
                                 ':(exclude)IS/Wm*/**' \
@@ -318,8 +352,16 @@ pipeline {
                                 ':(exclude)IS/TerracottaExamples/**'
                         '''
                     } else {
+                        writeFile(
+                            file: env.CHANGED_PACKAGES_FILE,
+                            text: 'No package changes detected.\n',
+                            encoding: 'UTF-8'
+                        )
+
                         echo 'No business package differences detected.'
                     }
+
+                    createHtmlReport()
                 }
             }
         }
@@ -327,7 +369,7 @@ pipeline {
         stage('Commit And Push') {
             when {
                 expression {
-                    SYNC_CHANGES
+                    env.SYNC_CHANGES == 'true'
                 }
             }
 
@@ -335,8 +377,13 @@ pipeline {
                 sh '''
                     set -e
 
-                    git config user.name "Jenkins webMethods Sync"
-                    git config user.email "jenkins@tawuniya.com"
+                    git config \
+                        user.name \
+                        "Jenkins webMethods Sync"
+
+                    git config \
+                        user.email \
+                        "jenkins@tawuniya.com"
 
                     git checkout -B "${SYNC_BRANCH}"
 
@@ -354,7 +401,8 @@ pipeline {
                         exit 1
                     fi
 
-                    git commit -m "Daily DEV server synchronization"
+                    git commit \
+                        -m "Daily DEV server synchronization"
                 '''
 
                 withCredentials([
@@ -376,7 +424,7 @@ pipeline {
         stage('Check Existing PR') {
             when {
                 expression {
-                    SYNC_CHANGES
+                    env.SYNC_CHANGES == 'true'
                 }
             }
 
@@ -413,13 +461,23 @@ pipeline {
                     }
 
                     if (existingPr) {
-                        OPEN_PR_FOUND = true
-                        PULL_REQUEST_URL =
+                        env.OPEN_PR_FOUND = 'true'
+
+                        env.PULL_REQUEST_URL =
                             getPullRequestUrl(existingPr.id)
 
-                        echo "Existing PR updated: ${PULL_REQUEST_URL}"
+                        echo(
+                            "Existing PR updated: " +
+                            "${env.PULL_REQUEST_URL}"
+                        )
+
+                        createHtmlReport()
                     } else {
-                        echo 'No existing open synchronization PR found.'
+                        env.OPEN_PR_FOUND = 'false'
+
+                        echo(
+                            'No existing open synchronization PR found.'
+                        )
                     }
                 }
             }
@@ -428,14 +486,16 @@ pipeline {
         stage('Create Pull Request') {
             when {
                 expression {
-                    SYNC_CHANGES && !OPEN_PR_FOUND
+                    env.SYNC_CHANGES == 'true' &&
+                    env.OPEN_PR_FOUND != 'true'
                 }
             }
 
             steps {
                 script {
                     def payload = [
-                        title: 'DEV Server Synchronization',
+                        title:
+                            'DEV Server Synchronization',
 
                         description:
                             "Synchronize business packages from " +
@@ -450,22 +510,41 @@ pipeline {
                         open: true,
                         closed: false,
 
+                        reviewers: [
+                            [
+                                user: [
+                                    name:
+                                        env.PR_REVIEWER_USERNAME
+                                ]
+                            ]
+                        ],
+
                         fromRef: [
-                            id: "refs/heads/${env.SYNC_BRANCH}",
+                            id:
+                                "refs/heads/${env.SYNC_BRANCH}",
+
                             repository: [
-                                slug: env.BITBUCKET_REPOSITORY,
+                                slug:
+                                    env.BITBUCKET_REPOSITORY,
+
                                 project: [
-                                    key: env.BITBUCKET_PROJECT
+                                    key:
+                                        env.BITBUCKET_PROJECT
                                 ]
                             ]
                         ],
 
                         toRef: [
-                            id: "refs/heads/${env.TARGET_BRANCH}",
+                            id:
+                                "refs/heads/${env.TARGET_BRANCH}",
+
                             repository: [
-                                slug: env.BITBUCKET_REPOSITORY,
+                                slug:
+                                    env.BITBUCKET_REPOSITORY,
+
                                 project: [
-                                    key: env.BITBUCKET_PROJECT
+                                    key:
+                                        env.BITBUCKET_PROJECT
                                 ]
                             ]
                         ]
@@ -507,10 +586,15 @@ pipeline {
                         )
                     }
 
-                    PULL_REQUEST_URL =
+                    env.PULL_REQUEST_URL =
                         getPullRequestUrl(response.id)
 
-                    echo "Pull request created: ${PULL_REQUEST_URL}"
+                    echo(
+                        "Pull request created: " +
+                        "${env.PULL_REQUEST_URL}"
+                    )
+
+                    createHtmlReport()
                 }
             }
         }
@@ -519,22 +603,51 @@ pipeline {
     post {
         success {
             script {
-                if (!SYNC_CHANGES) {
-                    echo 'No business-package changes found.'
-                    echo 'No branch or PR update was required.'
-                } else if (OPEN_PR_FOUND) {
-                    echo "Existing PR updated: ${PULL_REQUEST_URL}"
+                if (env.SYNC_CHANGES == 'true') {
+                    sendSyncEmail(
+                        'Success',
+                        '#27ae60',
+                        'Server differences were detected and synchronized.'
+                    )
                 } else {
-                    echo "New PR created: ${PULL_REQUEST_URL}"
+                    sendSyncEmail(
+                        'Success - No Changes',
+                        '#2980b9',
+                        'No server-to-Git differences were detected.'
+                    )
                 }
             }
         }
 
         failure {
-            echo 'DEV server synchronization failed.'
+            script {
+                sendSyncEmail(
+                    'Failed',
+                    '#c0392b',
+                    'The DEV server synchronization job failed.'
+                )
+            }
+        }
+
+        aborted {
+            script {
+                sendSyncEmail(
+                    'Aborted',
+                    '#7f8c8d',
+                    'The DEV server synchronization job was aborted.'
+                )
+            }
         }
 
         always {
+            archiveArtifacts(
+                artifacts:
+                    'packages-to-sync.txt, ' +
+                    'changed-packages.txt, ' +
+                    'sync-report.html',
+                allowEmptyArchive: true
+            )
+
             sh '''
                 rm -rf "${SYNC_DIRECTORY}" || true
 
@@ -544,10 +657,7 @@ pipeline {
                     open-pull-requests.json || true
             '''
 
-            archiveArtifacts(
-                artifacts: 'packages-to-sync.txt',
-                allowEmptyArchive: true
-            )
+            echo 'DEV server synchronization finished.'
         }
     }
 }
@@ -588,4 +698,172 @@ def getPullRequestUrl(prId) {
         "/projects/${env.BITBUCKET_PROJECT}" +
         "/repos/${env.BITBUCKET_REPOSITORY}" +
         "/pull-requests/${prId}/overview"
+}
+
+def createHtmlReport() {
+    def changedPackages = []
+
+    if (fileExists(env.CHANGED_PACKAGES_FILE)) {
+        changedPackages = readFile(
+            file: env.CHANGED_PACKAGES_FILE,
+            encoding: 'UTF-8'
+        )
+        .readLines()
+        .collect { it.trim() }
+        .findAll { it }
+    }
+
+    def packageRows = changedPackages.collect { packageName ->
+        "<tr><td>${packageName}</td></tr>"
+    }.join('\n')
+
+    if (!packageRows) {
+        packageRows =
+            '<tr><td>No package information available.</td></tr>'
+    }
+
+    def pullRequestDisplay = env.PULL_REQUEST_URL?.trim()
+        ? "<a href='${env.PULL_REQUEST_URL}'>" +
+          "${env.PULL_REQUEST_URL}</a>"
+        : 'Not created'
+
+    def report = """\
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    background: #f4f4f4;
+                    color: #333;
+                }
+
+                .container {
+                    width: 700px;
+                    margin: 20px auto;
+                    background: #fff;
+                    padding: 20px;
+                    border-radius: 8px;
+                }
+
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                }
+
+                th,
+                td {
+                    border: 1px solid #ddd;
+                    padding: 8px;
+                    text-align: left;
+                }
+
+                th {
+                    background: #ecf0f1;
+                }
+            </style>
+        </head>
+
+        <body>
+            <div class="container">
+                <h2>
+                    webMethods DEV Server Synchronization
+                </h2>
+
+                <p>
+                    <strong>Source server:</strong>
+                    ${env.SOURCE_SERVER}
+                </p>
+
+                <p>
+                    <strong>Target branch:</strong>
+                    ${env.TARGET_BRANCH}
+                </p>
+
+                <p>
+                    <strong>Sync branch:</strong>
+                    ${env.SYNC_BRANCH}
+                </p>
+
+                <p>
+                    <strong>Changes detected:</strong>
+                    ${env.SYNC_CHANGES == 'true' ? 'Yes' : 'No'}
+                </p>
+
+                <p>
+                    <strong>Pull request:</strong>
+                    ${pullRequestDisplay}
+                </p>
+
+                <h3>Changed Packages</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Package Name</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        ${packageRows}
+                    </tbody>
+                </table>
+
+                <p>
+                    <strong>Build:</strong>
+
+                    <a href="${env.BUILD_URL}">
+                        ${env.BUILD_URL}
+                    </a>
+                </p>
+            </div>
+        </body>
+        </html>
+    """.stripIndent()
+
+    writeFile(
+        file: env.HTML_REPORT_FILE,
+        text: report,
+        encoding: 'UTF-8'
+    )
+}
+
+def sendSyncEmail(status, color, message) {
+    if (!fileExists(env.HTML_REPORT_FILE)) {
+        createHtmlReport()
+    }
+
+    def report = readFile(
+        file: env.HTML_REPORT_FILE,
+        encoding: 'UTF-8'
+    )
+
+    def header = """
+        <h2 style="color:${color}">
+            webMethods DEV Server Synchronization - ${status}
+        </h2>
+
+        <p>${message}</p>
+    """.stripIndent()
+
+    report = report.replace(
+        '<h2>\n                    webMethods DEV Server Synchronization\n                </h2>',
+        header
+    )
+
+    emailext(
+        to: env.EMAIL_RECIPIENTS,
+
+        subject:
+            "${env.EMAIL_SUBJECT} - " +
+            "${status} - #${env.BUILD_NUMBER}",
+
+        mimeType: 'text/html',
+        body: report,
+
+        attachmentsPattern:
+            'changed-packages.txt, sync-report.html'
+    )
 }
