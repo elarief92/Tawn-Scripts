@@ -48,6 +48,7 @@ pipeline {
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '3'))
         timestamps()
+        skipDefaultCheckout(true)
     }
 
     environment {
@@ -138,9 +139,7 @@ pipeline {
                     echo "Environment selected: ${env.ENVIRONMENT_NAME}"
                     echo "Branch selected for checkout: ${env.BRANCH_NAME}"
                     echo "Running on Jenkins agent: ${env.NODE_NAME}"
-
-                    deleteDir()
-
+        
                     bbs_checkout(
                         branches: [[name: "*/${env.BRANCH_NAME}"]],
                         credentialsId: 'Admin_Bitbucket',
@@ -148,7 +147,10 @@ pipeline {
                         projectName: 'EI',
                         repositoryName: 'webmethods-source-code',
                         serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6',
-                        cloneOptions: [shallow: true, depth: 1]
+                        cloneOptions: [
+                            shallow: false
+                        ],
+                        cleanBeforeCheckout: true
                     )
                 }
             }
@@ -209,9 +211,11 @@ pipeline {
             steps {
                 sh '''
                     rm -rf "${TEMP_SRC}" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}"
+                    rm -f "${WORKSPACE}/build_output.zip"
+        
                     mkdir -p "${TEMP_SRC}" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}"
                 '''
-
+        
                 script {
                     for (pkg in CHANGED_PACKAGES) {
                         sh """
@@ -219,9 +223,10 @@ pipeline {
                                 echo "Missing package: ${pkg}"
                                 exit 1
                             fi
-
+        
                             mkdir -p "${env.TEMP_SRC}/${pkg}"
-                            cp -R "${env.WORKSPACE}/IS/${pkg}/." "${env.TEMP_SRC}/${pkg}/"
+                            cp -R "${env.WORKSPACE}/IS/${pkg}/." \
+                                "${env.TEMP_SRC}/${pkg}/"
                         """
                     }
                 }
