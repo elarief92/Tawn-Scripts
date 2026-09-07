@@ -128,8 +128,8 @@ pipeline {
                 script {
                     sendDeploymentEmail(
                         'Started',
-                        '#2b2626',
-                        "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been started as follows:",
+                        '#2c3e50',
+                        "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has started as follows:",
                         getSelected(params.TARGET_SCOPE).join(', ')
                     )
                 }
@@ -670,48 +670,65 @@ def zipBuildOutput() {
 }
 
 def sendDeploymentEmail(status, color, message, targetServers) {
+    boolean isStarted = status == 'Started'
+    boolean deployFailed = !isStarted && fileExists('.deployment_failed')
+
+    String exitCode = deployFailed
+        ? readFile('.deployment_failed').trim()
+        : '0'
+
+    String rollbackStatus = !isStarted && fileExists('.rollback_status')
+        ? readFile('.rollback_status').trim()
+        : 'NOT_REQUIRED'
+
+    String resultDetails = isStarted ? '' : """
+        <p><strong>Deployment Exit Code:</strong> ${exitCode}</p>
+        <p><strong>Rollback Required:</strong> ${deployFailed}</p>
+        <p><strong>Rollback Applied:</strong> ${rollbackStatus == 'SUCCESS'}</p>
+        <p><strong>Rollback Status:</strong> ${rollbackStatus}</p>
+    """
+
     emailext(
-        to: "${env.EMAIL_RECIPIENTS}",
+        to: env.EMAIL_RECIPIENTS,
         subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status}",
-        mimeType: 'text/html',
         recipientProviders: [[$class: 'DevelopersRecipientProvider']],
+        mimeType: 'text/html',
         body: """\
             <!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
                 <style>
-                    body { font-family: Arial, sans-serif; background: #f4f4f4; color: #333; }
-                    .container { width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,.1); }
-                    .header { background: ${color}; color: #fff; padding: 18px; text-align: center; font-size: 22px; font-weight: bold; }
-                    .content { padding: 20px; }
-                    .details { background: #ecf0f1; padding: 15px; border-radius: 6px; margin: 20px 0; }
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #34495e; }
+                    .container { width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; }
+                    h2 { color: #2c3e50; margin-top: 0; }
+                    .details { padding: 10px; border: 1px solid #e0e0e0; border-radius: 6px; }
                     .details p { margin: 6px 0; }
-                    .footer { font-size: 14px; color: #7f8c8d; text-align: center; padding: 15px; }
+                    .status { color: ${color}; font-weight: bold; }
+                    .btn { display: inline-block; margin-top: 15px; padding: 8px 12px; color: #3498db; text-decoration: none; border: 1px solid #3498db; border-radius: 5px; }
+                    .footer { margin-top: 20px; font-size: 12px; color: #7f8c8d; }
                 </style>
             </head>
             <body>
                 <div class="container">
-                    <div class="header">TAWUNIYA - Deployment ${status}</div>
-                    <div class="content">
-                        <p>Dears,</p>
-                        <p>${message}</p>
+                    <h2>TAWUNIYA - Deployment ${status}</h2>
+                    <p>Dears,</p>
+                    <p>${message}</p>
 
-                        <div class="details">
-                            <p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
-                            <p><strong>Environment:</strong> ${env.ENVIRONMENT_NAME}</p>
-                            <p><strong>Jenkins Agent:</strong> ${env.NODE_NAME}</p>
-                            <p><strong>Target Servers:</strong> ${targetServers ?: 'N/A'}</p>
-                            <p><strong>EPIC:</strong> <a href="https://bitbucket.tawn.com/plugins/servlet/jira-integration/issues/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
-                            <p><strong>Packages:</strong> ${getSelected(params.PACKAGES_TO_BUILD).join(', ')}</p>
-                            <p><strong>Rollback Required:</strong> ${env.ROLLBACK_REQUIRED}</p>
-                            <p><strong>Status:</strong> ${status}</p>
-                            <p><strong>Deployment Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
-                            <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
-                        </div>
-
-                        <p>Please be advised accordingly.</p>
+                    <div class="details">
+                        <p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
+                        <p><strong>Environment:</strong> ${env.ENVIRONMENT_NAME}</p>
+                        <p><strong>Jenkins Agent:</strong> ${env.NODE_NAME}</p>
+                        <p><strong>Target Servers:</strong> ${targetServers ?: 'N/A'}</p>
+                        <p><strong>EPIC:</strong> <a href="https://sd.tawn.com/browse/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
+                        <p><strong>Packages:</strong> ${getSelected(params.PACKAGES_TO_BUILD).join(', ')}</p>
+                        ${resultDetails}
+                        <p><strong>Status:</strong> <span class="status">${status}</span></p>
+                        <p><strong>Deployment Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
                     </div>
+
+                    <a class="btn" href="${env.BUILD_URL}">View Jenkins Build</a>
 
                     <div class="footer">
                         <p>Thank you for your cooperation.</p>
