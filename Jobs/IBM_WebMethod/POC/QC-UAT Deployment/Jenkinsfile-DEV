@@ -38,7 +38,7 @@ properties([
     ])
 ])
 
-def CHANGED_PACKAGES = []
+def SELECTED_PACKAGES = []
 def SELECTED_TARGETS = []
 
 pipeline {
@@ -81,6 +81,9 @@ pipeline {
 
         NEED_ROLLBACK = 'false'
         ROLLBACK_REQUIRED = 'false'
+        DEPLOYMENT_FAILED = 'false'
+        DEPLOY_EXIT_CODE = '0'
+        ROLLBACK_STATUS = 'NOT_REQUIRED'
     }
 
     stages {
@@ -91,10 +94,10 @@ pipeline {
                         error('EPIC_NAME is required')
                     }
 
-                    CHANGED_PACKAGES = getSelected(params.PACKAGES_TO_BUILD)
+                    SELECTED_PACKAGES = getSelected(params.PACKAGES_TO_BUILD)
                     SELECTED_TARGETS = getSelected(params.TARGET_SCOPE)
 
-                    if (CHANGED_PACKAGES.isEmpty()) {
+                    if (SELECTED_PACKAGES.isEmpty()) {
                         error('Select at least one package')
                     }
 
@@ -105,7 +108,7 @@ pipeline {
                     echo "Environment: ${env.ENVIRONMENT_NAME}"
                     echo "Branch: ${env.BRANCH_NAME}"
                     echo "Jenkins agent: ${env.NODE_NAME}"
-                    echo "Packages: ${CHANGED_PACKAGES.join(', ')}"
+                    echo "Packages: ${SELECTED_PACKAGES.join(', ')}"
                     echo "Targets: ${SELECTED_TARGETS.join(', ')}"
                 }
             }
@@ -163,7 +166,7 @@ pipeline {
                         error("Template XML not found after checkout: ${env.TEMPLATE_XML}")
                     }
 
-                    for (pkg in CHANGED_PACKAGES) {
+                    for (pkg in SELECTED_PACKAGES) {
                         if (!fileExists("IS/${pkg}")) {
                             error("Package not found in repo: IS/${pkg}")
                         }
@@ -210,26 +213,50 @@ pipeline {
         stage('Prepare Build Source') {
             steps {
                 sh '''
-                    rm -rf "${TEMP_SRC}" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}"
-                    rm -f "${WORKSPACE}/build_output.zip"
+                    echo "Cleaning previous build directories and status files..."
         
-                    mkdir -p "${TEMP_SRC}" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}"
+                    rm -rf "${TEMP_SRC}" \
+                           "${BUILD_OUTPUT_DIR}" \
+                           "${GENERATED_DIR}"
+        
+                    rm -f "${WORKSPACE}/build_output.zip" \
+                          "${WORKSPACE}/.deployment_failed" \
+                          "${WORKSPACE}/.rollback_status"
+        
+                    mkdir -p "${TEMP_SRC}" \
+                             "${BUILD_OUTPUT_DIR}" \
+                             "${GENERATED_DIR}"
                 '''
         
                 script {
-                    for (pkg in CHANGED_PACKAGES) {
+                    for (pkg in SELECTED_PACKAGES) {
                         sh """
+                            echo "Preparing package: ${pkg}"
+        
                             if [ ! -d "${env.WORKSPACE}/IS/${pkg}" ]; then
-                                echo "Missing package: ${pkg}"
+                                echo "ERROR: Package directory is missing: IS/${pkg}"
                                 exit 1
                             fi
         
                             mkdir -p "${env.TEMP_SRC}/${pkg}"
-                            cp -R "${env.WORKSPACE}/IS/${pkg}/." \
+        
+                            cp -R \
+                                "${env.WORKSPACE}/IS/${pkg}/." \
                                 "${env.TEMP_SRC}/${pkg}/"
+        
+                            echo "Package prepared successfully: ${pkg}"
                         """
                     }
                 }
+        
+                sh '''
+                    echo "Prepared build source:"
+                    find "${TEMP_SRC}" \
+                        -mindepth 1 \
+                        -maxdepth 1 \
+                        -type d \
+                        -printf '%f\n' | sort
+                '''
             }
         }
 
@@ -279,7 +306,7 @@ pipeline {
             steps {
                 script {
                     generateProjectAutomatorXml(
-                        CHANGED_PACKAGES,
+                        SELECTED_PACKAGES,
                         SELECTED_TARGETS
                     )
                 }
@@ -303,25 +330,56 @@ pipeline {
         stage('Deploy Candidate') {
             steps {
                 script {
-                    def deployFailed = deployCandidate()
-
-                    if (deployFailed) {
-                        env.NEED_ROLLBACK = 'true'
-                        env.ROLLBACK_REQUIRED = 'true'
+                    int deployStatus = deployCandidate()
+        
+                    if (deployStatus != 0) {
+                        writeFile(
+                            file: '.deployment_failed',
+                            text: deployStatus.toString()
+                        )
+        
+                        echo "Deployment failed with exit code ${deployStatus}."
+                        echo 'Automatic rollback is required.'
+                    } else {
+                        echo 'Deployment completed successfully.'
                     }
                 }
             }
         }
-
-        stage('Rollback If Needed') {
-            when {
-                expression {
-                    env.NEED_ROLLBACK == 'true'
+        
+        stage('Automatic Rollback') {
+            steps {
+                script {
+                    if (fileExists('.deployment_failed')) {
+                        echo 'Starting automatic rollback.'
+        
+                        int rollbackExitCode = rollbackDeployment()
+                        String rollbackResult =
+                            rollbackExitCode == 0 ? 'SUCCESS' : 'FAILED'
+        
+                        writeFile(
+                            file: '.rollback_status',
+                            text: rollbackResult
+                        )
+        
+                        echo "Rollback status: ${rollbackResult}"
+                    } else {
+                        echo 'Rollback skipped because deployment succeeded.'
+                    }
                 }
             }
-
+        }
+        
+        stage('Clean Failed Deployer Project') {
             steps {
-                rollbackDeployment()
+                script {
+                    if (fileExists('.deployment_failed')) {
+                        echo "Cleaning failed Deployer project: ${params.EPIC_NAME}"
+                        cleanExistingDeployerProject()
+                    } else {
+                        echo 'Failed-project cleanup skipped because deployment succeeded.'
+                    }
+                }
             }
         }
 
@@ -337,6 +395,36 @@ pipeline {
                     artifacts: 'generated/*.log, build_output.zip',
                     allowEmptyArchive: true
                 )
+            }
+        }
+        
+
+        
+        stage('Set Final Deployment Result') {
+            steps {
+                script {
+                    if (fileExists('.deployment_failed')) {
+                        def deployExitCode = readFile(
+                            file: '.deployment_failed'
+                        ).trim()
+        
+                        def rollbackStatus = fileExists('.rollback_status')
+                            ? readFile(file: '.rollback_status').trim()
+                            : 'UNKNOWN'
+        
+                        env.DEPLOYMENT_FAILED = 'true'
+                        env.ROLLBACK_REQUIRED = 'true'
+                        env.DEPLOY_EXIT_CODE = deployExitCode
+                        env.ROLLBACK_STATUS = rollbackStatus
+        
+                        error(
+                            "Deployment failed with exit code ${deployExitCode}. " +
+                            "Rollback status: ${rollbackStatus}."
+                        )
+                    }
+        
+                    echo 'Deployment and post-deployment steps completed successfully.'
+                }
             }
         }
     }
@@ -495,7 +583,7 @@ def createSnapshot() {
 }
 
 def deployCandidate() {
-    def deploymentFailed = false
+    int deployStatus
 
     withCredentials([
         usernamePassword(
@@ -504,8 +592,10 @@ def deployCandidate() {
             passwordVariable: 'DEPLOYER_PWD'
         )
     ]) {
-        def deployStatus = sh(
+        deployStatus = sh(
             script: '''
+                chmod +x "${DEPLOYER_CMD}" || true
+
                 "${DEPLOYER_CMD}" --deploy \
                     -project "${EPIC_NAME}" \
                     -dc "${EPIC_NAME}" \
@@ -517,55 +607,52 @@ def deployCandidate() {
             ''',
             returnStatus: true
         )
-
-        if (deployStatus != 0) {
-            deploymentFailed = true
-
-            catchError(
-                buildResult: 'FAILURE',
-                stageResult: 'FAILURE'
-            ) {
-                error("Deployment failed with exit code ${deployStatus}. Automatic rollback will be executed.")
-            }
-        } else {
-            echo 'Deployment succeeded.'
-        }
     }
 
-    deploymentFailed
+    if (deployStatus != 0) {
+        echo "Deployment failed with exit code ${deployStatus}."
+    } else {
+        echo 'Deployment succeeded.'
+    }
+
+    return deployStatus
 }
 
 def rollbackDeployment() {
-    script {
-        catchError(
-            buildResult: 'FAILURE',
-            stageResult: 'FAILURE'
-        ) {
-            withCredentials([
-                usernamePassword(
-                    credentialsId: 'IS_Target_Preprod',
-                    usernameVariable: 'DEPLOYER_USER',
-                    passwordVariable: 'DEPLOYER_PWD'
-                )
-            ]) {
-                sh '''
-                    echo "Automatic rollback started for project: ${EPIC_NAME}"
+    int rollbackStatus
 
-                    chmod +x "${DEPLOYER_CMD}" || true
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'IS_Target_Preprod',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        rollbackStatus = sh(
+            script: '''
+                echo "Automatic rollback started for project: ${EPIC_NAME}"
 
-                    "${DEPLOYER_CMD}" --rollback \
-                        -project "${EPIC_NAME}" \
-                        -dc "${EPIC_NAME}" \
-                        -host "${DEPLOYER_HOST}" \
-                        -port "${DEPLOYER_PORT}" \
-                        -user "${DEPLOYER_USER}" \
-                        -pwd "${DEPLOYER_PWD}"
+                chmod +x "${DEPLOYER_CMD}" || true
 
-                    echo "Automatic rollback completed."
-                '''
-            }
-        }
+                "${DEPLOYER_CMD}" --rollback \
+                    -project "${EPIC_NAME}" \
+                    -dc "${EPIC_NAME}" \
+                    -host "${DEPLOYER_HOST}" \
+                    -port "${DEPLOYER_PORT}" \
+                    -user "${DEPLOYER_USER}" \
+                    -pwd "${DEPLOYER_PWD}"
+            ''',
+            returnStatus: true
+        )
     }
+
+    if (rollbackStatus == 0) {
+        echo 'Automatic rollback completed successfully.'
+    } else {
+        echo "Automatic rollback failed with exit code ${rollbackStatus}."
+    }
+
+    return rollbackStatus
 }
 
 def zipBuildOutput() {
