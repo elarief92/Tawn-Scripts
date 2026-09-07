@@ -682,9 +682,7 @@ def sendDeploymentEmail(status, color, message, targetServers) {
         : 'NOT_REQUIRED'
 
     String resultDetails = isStarted ? '' : """
-        <p><strong>Deployment Exit Code:</strong> ${exitCode}</p>
         <p><strong>Rollback Required:</strong> ${deployFailed}</p>
-        <p><strong>Rollback Applied:</strong> ${rollbackStatus == 'SUCCESS'}</p>
         <p><strong>Rollback Status:</strong> ${rollbackStatus}</p>
     """
 
