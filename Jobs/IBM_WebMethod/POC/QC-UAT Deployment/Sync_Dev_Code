@@ -1,0 +1,239 @@
+pipeline {
+    agent { label 'SAG-PREP-IPP02' }
+
+    options {
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '5'))
+        skipDefaultCheckout(true)
+    }
+
+    triggers {
+        cron('H 1 * * *')
+    }
+
+    environment {
+        SERVER_PACKAGE_ROOT = '/sag/dbp1011/IntegrationServer/instances/default/packages'
+        TARGET_BRANCH = 'DEV'
+
+        BITBUCKET_PROJECT = 'EI'
+        BITBUCKET_REPOSITORY = 'webmethods-source-code'
+        BITBUCKET_CLONE_URL = 'https://bitbucket.tawn.com/scm/EI/webmethods-source-code.git'
+        BITBUCKET_CREDENTIALS = 'Admin_Bitbucket'
+
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+        EMAIL_SUBJECT = 'webMethods DEV Synchronization'
+    }
+
+    stages {
+        stage('Validate Source') {
+            steps {
+                sh '''
+                    rm -f "${WORKSPACE}/.sync_result" "${WORKSPACE}/.sync_commit"
+
+                    if [ ! -d "${SERVER_PACKAGE_ROOT}" ]; then
+                        echo "ERROR: Package directory not found: ${SERVER_PACKAGE_ROOT}"
+                        exit 1
+                    fi
+
+                    if [ ! -r "${SERVER_PACKAGE_ROOT}" ]; then
+                        echo "ERROR: Package directory is not readable: ${SERVER_PACKAGE_ROOT}"
+                        exit 1
+                    fi
+
+                    echo "Source server: ${NODE_NAME}"
+                    echo "Source directory: ${SERVER_PACKAGE_ROOT}"
+                    echo "Target branch: ${TARGET_BRANCH}"
+                    echo "Target directory: IS/"
+                '''
+            }
+        }
+
+        stage('Checkout DEV') {
+            steps {
+                script {
+                    bbs_checkout(
+                        branches: [[name: "*/${env.TARGET_BRANCH}"]],
+                        credentialsId: env.BITBUCKET_CREDENTIALS,
+                        id: '06c55797-80ad-4cb9-bea7-299d2a91506e',
+                        projectName: env.BITBUCKET_PROJECT,
+                        repositoryName: env.BITBUCKET_REPOSITORY,
+                        serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6'
+                    )
+                }
+
+                sh '''
+                    GIT_REMOTE="$(git remote | head -n 1)"
+
+                    if [ -z "${GIT_REMOTE}" ]; then
+                        echo "ERROR: Git remote was not found."
+                        exit 1
+                    fi
+
+                    git checkout -B "${TARGET_BRANCH}" "${GIT_REMOTE}/${TARGET_BRANCH}"
+                    git reset --hard "${GIT_REMOTE}/${TARGET_BRANCH}"
+
+                    mkdir -p "${WORKSPACE}/IS"
+
+                    echo "Git remote: ${GIT_REMOTE}"
+                    echo "Current branch: $(git branch --show-current)"
+                    echo "Current commit: $(git rev-parse HEAD)"
+                '''
+            }
+        }
+
+        stage('Sync And Push IS') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: env.BITBUCKET_CREDENTIALS,
+                        usernameVariable: 'BB_USER',
+                        passwordVariable: 'BB_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+                        set +x
+
+                        mkdir -p "${WORKSPACE}@tmp"
+                        SYNC_TEMP="$(mktemp -d "${WORKSPACE}@tmp/dev-is-sync.XXXXXX")"
+                        trap 'rm -rf "${SYNC_TEMP}"' EXIT
+
+                        echo "Collecting DEV business packages..."
+
+                        tar -C "${SERVER_PACKAGE_ROOT}" --exclude='./Default' --exclude='./default' --exclude='./Wm*' --exclude='./Wx*' --exclude='*/logs' --exclude='*/log' --exclude='*/cache' --exclude='*/temp' --exclude='*/tmp' --exclude='*/stats' --exclude='*/audit' --exclude='*.log' --exclude='*.tmp' --exclude='*.lck' --exclude='*.lock' --exclude='*.bak' -cf - . | tar -C "${SYNC_TEMP}" -xf -
+
+                        if ! find "${SYNC_TEMP}" -mindepth 1 -maxdepth 1 -type d | grep -q .; then
+                            echo "ERROR: No business packages were found."
+                            exit 1
+                        fi
+
+                        echo "Updating repository IS directory..."
+
+                        rm -rf "${WORKSPACE}/IS"
+                        mkdir -p "${WORKSPACE}/IS"
+                        cp -a "${SYNC_TEMP}/." "${WORKSPACE}/IS/"
+
+                        cd "${WORKSPACE}"
+
+                        git config user.name "Jenkins webMethods Sync"
+                        git config user.email "melarief@tawuniya.com"
+
+                        git add -A -- IS/
+
+                        if git diff --cached --quiet -- IS/; then
+                            echo "NO_CHANGES" > "${WORKSPACE}/.sync_result"
+                            echo "No changes found inside IS/."
+                            exit 0
+                        fi
+
+                        echo "Changes detected inside IS/:"
+                        git diff --cached --stat -- IS/
+
+                        COMMIT_DATE="$(date '+%Y-%m-%d %H:%M:%S')"
+
+                        git commit -m "DEV IS package changes automatically synchronized on ${COMMIT_DATE}"
+
+                        BASIC_AUTH="$(printf '%s:%s' "${BB_USER}" "${BB_PASSWORD}" | base64 | tr -d '\\n')"
+
+                        git -c http.extraHeader="Authorization: Basic ${BASIC_AUTH}" push "${BITBUCKET_CLONE_URL}" "HEAD:refs/heads/${TARGET_BRANCH}"
+
+                        git rev-parse HEAD > "${WORKSPACE}/.sync_commit"
+                        echo "PUSHED" > "${WORKSPACE}/.sync_result"
+
+                        echo "IS changes pushed successfully to ${TARGET_BRANCH}."
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                String result = fileExists('.sync_result')
+                    ? readFile('.sync_result').trim()
+                    : 'NO_CHANGES'
+
+                String message = result == 'PUSHED'
+                    ? 'DEV package changes were synchronized and pushed successfully.'
+                    : 'Synchronization completed successfully. No package changes were found.'
+
+                sendSyncEmail('Success', '#27ae60', message, result)
+            }
+        }
+
+        failure {
+            script {
+                sendSyncEmail(
+                    'Failed',
+                    '#c0392b',
+                    'DEV package synchronization failed.',
+                    'FAILED'
+                )
+            }
+        }
+
+        always {
+            echo 'DEV IS synchronization job finished.'
+        }
+    }
+}
+
+def sendSyncEmail(status, color, message, result) {
+    String resultText = result == 'PUSHED'
+        ? 'Changes committed and pushed'
+        : result == 'NO_CHANGES'
+            ? 'No changes found'
+            : 'Synchronization failed'
+
+    String commitId = fileExists('.sync_commit')
+        ? readFile('.sync_commit').trim()
+        : 'N/A'
+
+    emailext(
+        to: env.EMAIL_RECIPIENTS,
+        subject: "${env.EMAIL_SUBJECT} - ${status}",
+        mimeType: 'text/html',
+        body: """\
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #34495e; }
+                    .container { width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; }
+                    .details { padding: 10px; border: 1px solid #e0e0e0; border-radius: 6px; }
+                    .details p { margin: 6px 0; }
+                    .status { color: ${color}; font-weight: bold; }
+                    .btn { display: inline-block; margin-top: 15px; padding: 8px 12px; color: #3498db; text-decoration: none; border: 1px solid #3498db; border-radius: 5px; }
+                    .footer { margin-top: 20px; font-size: 12px; color: #7f8c8d; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h2>TAWUNIYA - DEV Synchronization ${status}</h2>
+                    <p>Dears,</p>
+                    <p>${message}</p>
+
+                    <div class="details">
+                        <p><strong>Source Server:</strong> ${env.NODE_NAME}</p>
+                        <p><strong>Repository:</strong> ${env.BITBUCKET_PROJECT}/${env.BITBUCKET_REPOSITORY}</p>
+                        <p><strong>Branch:</strong> ${env.TARGET_BRANCH}</p>
+                        <p><strong>Sync Result:</strong> ${resultText}</p>
+                        <p><strong>Commit:</strong> ${commitId}</p>
+                        <p><strong>Status:</strong> <span class="status">${status}</span></p>
+                        <p><strong>Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
+                    </div>
+
+                    <a class="btn" href="${env.BUILD_URL}">View Jenkins Build</a>
+
+                    <div class="footer">
+                        <p>Thank you for your cooperation.</p>
+                        <p><strong>Best regards,</strong><br>The DevOps Team</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        """
+    )
+}
