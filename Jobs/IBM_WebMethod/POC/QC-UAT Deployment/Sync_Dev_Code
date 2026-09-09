@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'SAG-PREP-IPP02' }
+    agent { label 'DRV-SAG-IPD01' }
 
     options {
         disableConcurrentBuilds()
@@ -8,7 +8,7 @@ pipeline {
     }
 
     triggers {
-        cron('H 1 * * *')
+        cron('0 21 * * *')
     }
 
     environment {

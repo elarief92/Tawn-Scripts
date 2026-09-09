@@ -2,35 +2,96 @@ properties([
     parameters([
         string(name: 'EPIC_NAME', defaultValue: '', description: 'Use a Valid Jira Epic Number'),
 
-        [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select DEV target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["PREPROD_APP01"]'], script: [classpath: [], sandbox: true, script: 'return ["PREPROD_APP01", "PREPROD_APP02"]']]],
+        [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select QC target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01"]'], script: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01"]']]],
 
         [
             $class: 'ChoiceParameter',
             choiceType: 'PT_CHECKBOX',
             name: 'PACKAGES_TO_BUILD',
-            description: 'Select packages to build and deploy',
+            description: 'Select QC packages to build and deploy',
             filterable: true,
             filterLength: 2,
             script: [
                 $class: 'GroovyScript',
-                fallbackScript: [classpath: [], sandbox: true, script: 'return ["PSUtilities"]'],
-                script: [
+                fallbackScript: [
                     classpath: [],
                     sandbox: true,
+                    script: 'return ["ERROR: Unable to load QC packages"]'
+                ],
+                script: [
+                    classpath: [],
+                    sandbox: false,
                     script: '''
-                        return [
-                            "PSUtilities",
-                            "TawncheckoutPayment",
-                            "TawnMedDomesticWorker",
-                            "TawnMobileApplication",
-                            "TawnMotorNonRetail",
-                            "TawnSMEMedicalProcess",
-                            "TawnSMESalesCRM",
-                            "zzCharan",
-                            "zzConnectivityCheck",
-                            "zzHanu",
-                            "zzwebmpoc"
-                        ]
+                        import groovy.json.JsonSlurper
+                        import java.net.HttpURLConnection
+                        import java.net.URLEncoder
+                        import java.util.Base64
+                        import jenkins.model.Jenkins
+                        import com.cloudbees.plugins.credentials.CredentialsProvider
+                        import com.cloudbees.plugins.credentials.common.StandardUsernamePasswordCredentials
+
+                        def credentialId = 'Admin_Bitbucket'
+
+                        def credential = CredentialsProvider.lookupCredentials(
+                            StandardUsernamePasswordCredentials,
+                            Jenkins.get(),
+                            null,
+                            null
+                        ).find { it.id == credentialId }
+
+                        if (!credential) {
+                            return ["ERROR: Credential '${credentialId}' not found"]
+                        }
+
+                        def authentication = Base64.encoder.encodeToString(
+                            "${credential.username}:${credential.password.plainText}".getBytes('UTF-8')
+                        )
+
+                        def encodedBranch = URLEncoder.encode(
+                            'refs/heads/QC',
+                            'UTF-8'
+                        )
+
+                        def apiUrl =
+                            'https://bitbucket.tawn.com/rest/api/1.0/projects/EI/' +
+                            'repos/webmethods-source-code/browse/IS' +
+                            "?at=${encodedBranch}&limit=1000"
+
+                        HttpURLConnection connection =
+                            (HttpURLConnection) new URL(apiUrl).openConnection()
+
+                        connection.requestMethod = 'GET'
+                        connection.connectTimeout = 10000
+                        connection.readTimeout = 30000
+                        connection.setRequestProperty('Authorization', "Basic ${authentication}")
+                        connection.setRequestProperty('Accept', 'application/json')
+
+                        try {
+                            int responseCode = connection.responseCode
+
+                            if (responseCode != 200) {
+                                return ["ERROR: Bitbucket HTTP ${responseCode}"]
+                            }
+
+                            def response = new JsonSlurper().parse(connection.inputStream)
+
+                            def packages = response.children.values
+                                .findAll { it.type == 'DIRECTORY' }
+                                .collect { it.path.name.toString() }
+                                .findAll {
+                                    it != 'Default' &&
+                                    it != 'default' &&
+                                    !it.startsWith('Wm') &&
+                                    !it.startsWith('Wx')
+                                }
+                                .sort()
+
+                            return packages ?: ["ERROR: No QC packages found"]
+                        } catch (Exception error) {
+                            return ["ERROR: ${error.class.simpleName}: ${error.message}"]
+                        } finally {
+                            connection.disconnect()
+                        }
                     '''
                 ]
             ]
@@ -42,7 +103,7 @@ def SELECTED_PACKAGES = []
 def SELECTED_TARGETS = []
 
 pipeline {
-    agent { label 'SAG-PREP-IPP02' }
+    agent { label 'HQV-SAG-IPU01_QC' }
 
     options {
         disableConcurrentBuilds()
@@ -52,11 +113,11 @@ pipeline {
     }
 
     environment {
-        ENVIRONMENT_NAME = 'DEV'
-        BRANCH_NAME = 'DEV_CICD'
+        ENVIRONMENT_NAME = 'QC'
+        BRANCH_NAME = 'QC'
 
-        SAG_HOME = '/sag/be1015'
-        JAVA_HOME = '/sag/be1015/jvm/jvm'
+        SAG_HOME = '/sag/dbp1011'
+        JAVA_HOME = '/sag/dbp1011/jvm/jvm'
 
         ABE_BUILD_FILE = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
         DEPLOYER_BIN = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
@@ -101,6 +162,10 @@ pipeline {
                         error('Select at least one package')
                     }
 
+                    if (SELECTED_PACKAGES.any { it.startsWith('ERROR:') }) {
+                        error("Package discovery failed: ${SELECTED_PACKAGES.join(', ')}")
+                    }
+
                     if (SELECTED_TARGETS.isEmpty()) {
                         error('Select at least one target server')
                     }
@@ -142,7 +207,7 @@ pipeline {
                     echo "Environment selected: ${env.ENVIRONMENT_NAME}"
                     echo "Branch selected for checkout: ${env.BRANCH_NAME}"
                     echo "Running on Jenkins agent: ${env.NODE_NAME}"
-        
+
                     bbs_checkout(
                         branches: [[name: "*/${env.BRANCH_NAME}"]],
                         credentialsId: 'Admin_Bitbucket',
@@ -214,43 +279,44 @@ pipeline {
             steps {
                 sh '''
                     echo "Cleaning previous build directories and status files..."
-        
+
                     rm -rf "${TEMP_SRC}" \
                            "${BUILD_OUTPUT_DIR}" \
                            "${GENERATED_DIR}"
-        
+
                     rm -f "${WORKSPACE}/build_output.zip" \
                           "${WORKSPACE}/.deployment_failed" \
                           "${WORKSPACE}/.rollback_status"
-        
+
                     mkdir -p "${TEMP_SRC}" \
                              "${BUILD_OUTPUT_DIR}" \
                              "${GENERATED_DIR}"
                 '''
-        
+
                 script {
                     for (pkg in SELECTED_PACKAGES) {
                         sh """
                             echo "Preparing package: ${pkg}"
-        
+
                             if [ ! -d "${env.WORKSPACE}/IS/${pkg}" ]; then
                                 echo "ERROR: Package directory is missing: IS/${pkg}"
                                 exit 1
                             fi
-        
+
                             mkdir -p "${env.TEMP_SRC}/${pkg}"
-        
+
                             cp -R \
                                 "${env.WORKSPACE}/IS/${pkg}/." \
                                 "${env.TEMP_SRC}/${pkg}/"
-        
+
                             echo "Package prepared successfully: ${pkg}"
                         """
                     }
                 }
-        
+
                 sh '''
                     echo "Prepared build source:"
+
                     find "${TEMP_SRC}" \
                         -mindepth 1 \
                         -maxdepth 1 \
@@ -331,13 +397,13 @@ pipeline {
             steps {
                 script {
                     int deployStatus = deployCandidate()
-        
+
                     if (deployStatus != 0) {
                         writeFile(
                             file: '.deployment_failed',
                             text: deployStatus.toString()
                         )
-        
+
                         echo "Deployment failed with exit code ${deployStatus}."
                         echo 'Automatic rollback is required.'
                     } else {
@@ -346,22 +412,22 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Automatic Rollback') {
             steps {
                 script {
                     if (fileExists('.deployment_failed')) {
                         echo 'Starting automatic rollback.'
-        
+
                         int rollbackExitCode = rollbackDeployment()
                         String rollbackResult =
                             rollbackExitCode == 0 ? 'SUCCESS' : 'FAILED'
-        
+
                         writeFile(
                             file: '.rollback_status',
                             text: rollbackResult
                         )
-        
+
                         echo "Rollback status: ${rollbackResult}"
                     } else {
                         echo 'Rollback skipped because deployment succeeded.'
@@ -369,7 +435,7 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Clean Failed Deployer Project') {
             steps {
                 script {
@@ -397,9 +463,7 @@ pipeline {
                 )
             }
         }
-        
 
-        
         stage('Set Final Deployment Result') {
             steps {
                 script {
@@ -407,22 +471,22 @@ pipeline {
                         def deployExitCode = readFile(
                             file: '.deployment_failed'
                         ).trim()
-        
+
                         def rollbackStatus = fileExists('.rollback_status')
                             ? readFile(file: '.rollback_status').trim()
                             : 'UNKNOWN'
-        
+
                         env.DEPLOYMENT_FAILED = 'true'
                         env.ROLLBACK_REQUIRED = 'true'
                         env.DEPLOY_EXIT_CODE = deployExitCode
                         env.ROLLBACK_STATUS = rollbackStatus
-        
+
                         error(
                             "Deployment failed with exit code ${deployExitCode}. " +
                             "Rollback status: ${rollbackStatus}."
                         )
                     }
-        
+
                     echo 'Deployment and post-deployment steps completed successfully.'
                 }
             }
@@ -674,11 +738,11 @@ def sendDeploymentEmail(status, color, message, targetServers) {
     boolean deployFailed = !isStarted && fileExists('.deployment_failed')
 
     String exitCode = deployFailed
-        ? readFile('.deployment_failed').trim()
+        ? readFile(file: '.deployment_failed').trim()
         : '0'
 
     String rollbackStatus = !isStarted && fileExists('.rollback_status')
-        ? readFile('.rollback_status').trim()
+        ? readFile(file: '.rollback_status').trim()
         : 'NOT_REQUIRED'
 
     String resultDetails = isStarted ? '' : """
@@ -783,8 +847,7 @@ def buildMapTargetAliases(targets) {
 
 def getTargetConfigs(serverNames) {
     def targetConfigMap = [
-        'PREPROD_APP01': [alias: 'PREPROD_APP01', host: '10.7.248.74', port: '5555'],
-        'PREPROD_APP02': [alias: 'PREPROD_APP02', host: '10.7.248.75', port: '5555']
+        'HQV-SAG-IPU01': [alias: 'HQV-SAG-IPU01', host: '10.24.7.181', port: '5555']
     ]
 
     serverNames.each { targetName ->
