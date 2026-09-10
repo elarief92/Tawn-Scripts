@@ -2,7 +2,7 @@ properties([
     parameters([
         string(name: 'EPIC_NAME', defaultValue: '', description: 'Use a Valid Jira Epic Number'),
 
-        [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select QC target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01"]'], script: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01"]']]],
+        [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select QC target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01_QC"]'], script: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01_QC"]']]],
 
         [
             $class: 'ChoiceParameter',
@@ -103,7 +103,7 @@ def SELECTED_PACKAGES = []
 def SELECTED_TARGETS = []
 
 pipeline {
-    agent { label 'HQV-SAG-IPU01_QC' }
+    agent { label 'HQV-SAG-DEPP01' }
 
     options {
         disableConcurrentBuilds()
@@ -847,7 +847,7 @@ def buildMapTargetAliases(targets) {
 
 def getTargetConfigs(serverNames) {
     def targetConfigMap = [
-        'HQV-SAG-IPU01': [alias: 'HQV-SAG-IPU01', host: '10.24.7.181', port: '5555']
+        'HQV-SAG-IPU01_QC': [alias: 'HQV-SAG-IPU01', host: '10.24.7.181', port: '5555']
     ]
 
     serverNames.each { targetName ->
