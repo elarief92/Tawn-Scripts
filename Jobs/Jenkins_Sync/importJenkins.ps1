@@ -24,6 +24,7 @@
 $ErrorActionPreference = "Stop"
 
 $SharedRoot        = "E:\JenkinsSync"
+$CompletionMarker = Join-Path $SharedRoot "_export_success.txt"
 $TargetJenkinsHome = "E:\Jenkins\Home"
 $ServiceName       = "jenkins"
 $LogDirectory      = "E:\Jenkins_Sync\logs"
@@ -181,6 +182,18 @@ try {
 
     if (-not (Test-Path -LiteralPath $SharedRoot)) {
         throw "Shared landing directory does not exist: $SharedRoot"
+    }
+
+    if (-not (Test-Path -LiteralPath $CompletionMarker)) {
+        throw "Latest Jenkins export did not complete successfully. Completion marker is missing: $CompletionMarker"
+    }
+
+    $MarkerAge = (Get-Date) - (Get-Item -LiteralPath $CompletionMarker).LastWriteTime
+
+    Write-Log "Latest successful export age: $([math]::Round($MarkerAge.TotalMinutes, 2)) minutes"
+
+    if ($MarkerAge.TotalHours -gt 2) {
+        throw "Latest successful export is older than 2 hours. Import aborted to prevent importing stale data."
     }
 
     if (-not (Test-Path -LiteralPath $TargetJenkinsHome)) {

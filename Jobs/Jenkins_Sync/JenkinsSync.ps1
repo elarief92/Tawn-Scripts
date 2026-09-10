@@ -23,6 +23,7 @@ $ErrorActionPreference = "Stop"
 
 $SourceJenkinsHome = "E:\Jenkins\Home"
 $SharedFolder      = "\\HQV-JNKS-APPP03\JenkinsSync"
+$CompletionMarker = Join-Path $SharedFolder "_export_success.txt"
 $LogDirectory      = "E:\Jenkins_Sync\logs"
 $LogFile           = Join-Path $LogDirectory "export_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 
@@ -125,6 +126,11 @@ try {
         throw "Shared folder is unavailable: $SharedFolder"
     }
 
+    if (Test-Path -LiteralPath $CompletionMarker) {
+        Remove-Item -LiteralPath $CompletionMarker -Force
+        Write-Log "Previous export completion marker removed."
+    }
+
     Invoke-CheckedRobocopy `
         -Description "Export plugins" `
         -Source "$SourceJenkinsHome\plugins" `
@@ -154,6 +160,9 @@ try {
             "lastSuccessful"
         )
 
+    (Get-Date).ToString("o") | Set-Content -LiteralPath $CompletionMarker -Encoding ascii
+
+    Write-Log "Completion marker created: $CompletionMarker"
     Write-Log "============================================================"
     Write-Log "Jenkins PROD synchronization export completed successfully"
     Write-Log "============================================================"
