@@ -1,91 +1,51 @@
-# ==============================================================================
-# jenkinsnew synchronization import
-#
-# Source landing directory:
-#   E:\JenkinsSync
-#
-# Target Jenkins Home:
-#   E:\Jenkins\Home
-#
-# Imports:
-#   - Plugin archive files
-#   - Jenkins users
-#   - Job and folder configurations
-#
-# Does not import, modify, or delete:
-#   - Build history
-#   - Archived build artifacts
-#   - Workspaces
-#   - Target-only jobs
-#
-# Jenkins is restarted only when changes are detected.
-# ==============================================================================
+# JenkinsNew synchronization import
+# Source: E:\JenkinsSync
+# Target: E:\Jenkins\Home
+# Build history, workspaces and target-only jobs are preserved.
 
 $ErrorActionPreference = "Stop"
 
-$SharedRoot        = "E:\JenkinsSync"
-$CompletionMarker = Join-Path $SharedRoot "_export_success.txt"
-$TargetJenkinsHome = "E:\Jenkins\Home"
-$ServiceName       = "jenkins"
-$LogDirectory      = "E:\Jenkins_Sync\logs"
-$LogFile           = Join-Path $LogDirectory "import_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+$SharedRoot  = "E:\JenkinsSync"
+$JenkinsHome = "E:\Jenkins\Home"
+$Marker      = "$SharedRoot\_export_success.txt"
+$Service     = "jenkins"
+$LogDir      = "E:\Jenkins_Sync\logs"
+$LogFile     = "$LogDir\import_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 
 $JenkinsWasStopped = $false
 
-New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-function Write-Log {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Message
-    )
-
-    $Timestamp  = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $LogMessage = "[$Timestamp] $Message"
-
-    Write-Host $LogMessage
-    $LogMessage | Out-File -FilePath $LogFile -Append -Encoding ascii
+function Write-Log($Message) {
+    $Line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
+    Write-Host $Line
+    $Line | Out-File $LogFile -Append -Encoding ascii
 }
 
-function Test-RobocopyChanges {
+function Invoke-Robocopy {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$Description,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Source,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Destination,
-
-        [string[]]$FileFilters = @("*.*"),
-
-        [string[]]$ExcludedDirectories = @()
+        $Name,
+        $Source,
+        $Destination,
+        $Files = @("*.*"),
+        $ExcludedDirs = @(),
+        [switch]$Preview
     )
 
     if (-not (Test-Path -LiteralPath $Source)) {
-        throw "Import source does not exist: $Source"
+        throw "Source path does not exist: $Source"
     }
 
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 
-    Write-Log "Checking for changes: $Description"
-
-    $RobocopyArguments = @(
+    $RoboArgs = @(
         $Source
         $Destination
-    )
-
-    $RobocopyArguments += $FileFilters
-
-    $RobocopyArguments += @(
+    ) + $Files + @(
         "/E"
-        "/L"
         "/XJ"
         "/COPY:DAT"
         "/DCOPY:DAT"
-        "/R:0"
-        "/W:0"
         "/NP"
         "/NDL"
         "/NFL"
@@ -94,235 +54,155 @@ function Test-RobocopyChanges {
         "/LOG+:$LogFile"
     )
 
-    if ($ExcludedDirectories.Count -gt 0) {
-        $RobocopyArguments += "/XD"
-        $RobocopyArguments += $ExcludedDirectories
+    if ($Preview) {
+        Write-Log "Checking for changes: $Name"
+        $RoboArgs += @("/L", "/R:0", "/W:0")
+    }
+    else {
+        Write-Log "Importing $Name..."
+        $RoboArgs += @("/Z", "/R:3", "/W:10")
     }
 
-    & robocopy.exe @RobocopyArguments | Out-Null
-    $RobocopyExitCode = $LASTEXITCODE
-
-    Write-Log "$Description comparison returned exit code $RobocopyExitCode."
-
-    if ($RobocopyExitCode -ge 8) {
-        throw "Unable to compare $Description. Robocopy exit code: $RobocopyExitCode."
+    if ($ExcludedDirs.Count -gt 0) {
+        $RoboArgs += "/XD"
+        $RoboArgs += $ExcludedDirs
     }
 
-    return [bool](($RobocopyExitCode -band 1) -eq 1)
-}
+    & robocopy.exe @RoboArgs | Out-Null
+    $ExitCode = $LASTEXITCODE
 
-function Invoke-CheckedRobocopy {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Description,
+    Write-Log "$Name returned Robocopy exit code $ExitCode."
 
-        [Parameter(Mandatory = $true)]
-        [string]$Source,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Destination,
-
-        [string[]]$FileFilters = @("*.*"),
-
-        [string[]]$ExcludedDirectories = @()
-    )
-
-    if (-not (Test-Path -LiteralPath $Source)) {
-        throw "Import source does not exist: $Source"
+    if ($ExitCode -ge 8) {
+        throw "$Name failed with Robocopy exit code $ExitCode."
     }
 
-    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-
-    Write-Log "Starting: $Description"
-    Write-Log "Source: $Source"
-    Write-Log "Destination: $Destination"
-
-    $RobocopyArguments = @(
-        $Source
-        $Destination
-    )
-
-    $RobocopyArguments += $FileFilters
-
-    $RobocopyArguments += @(
-        "/E"
-        "/Z"
-        "/XJ"
-        "/COPY:DAT"
-        "/DCOPY:DAT"
-        "/R:3"
-        "/W:10"
-        "/NP"
-        "/NDL"
-        "/NFL"
-        "/NJH"
-        "/NJS"
-        "/LOG+:$LogFile"
-    )
-
-    if ($ExcludedDirectories.Count -gt 0) {
-        $RobocopyArguments += "/XD"
-        $RobocopyArguments += $ExcludedDirectories
-    }
-
-    & robocopy.exe @RobocopyArguments | Out-Null
-    $RobocopyExitCode = $LASTEXITCODE
-
-    Write-Log "$Description completed with Robocopy exit code $RobocopyExitCode."
-
-    if ($RobocopyExitCode -ge 8) {
-        throw "$Description failed with Robocopy exit code $RobocopyExitCode."
+    if ($Preview) {
+        return [bool](($ExitCode -band 1) -eq 1)
     }
 }
+
+$Items = @(
+    @{
+        Name        = "plugins"
+        Source      = "$SharedRoot\plugins"
+        Destination = "$JenkinsHome\plugins"
+        Files       = @(
+            "*.jpi"
+            "*.hpi"
+            "*.jpi.disabled"
+            "*.hpi.disabled"
+            "*.pinned"
+        )
+        Exclude = @()
+    },
+    @{
+        Name        = "users"
+        Source      = "$SharedRoot\users"
+        Destination = "$JenkinsHome\users"
+        Files       = @("*.*")
+        Exclude     = @()
+    },
+    @{
+        Name        = "job configurations"
+        Source      = "$SharedRoot\jobs"
+        Destination = "$JenkinsHome\jobs"
+        Files       = @("*.*")
+        Exclude     = @(
+            "builds"
+            "workspace"
+            "indexing"
+            "lastStable"
+            "lastSuccessful"
+        )
+    }
+)
 
 try {
-    Write-Log "============================================================"
-    Write-Log "Starting jenkinsnew synchronization import"
-    Write-Log "============================================================"
+    Write-Log "Starting JenkinsNew synchronization import."
 
     if (-not (Test-Path -LiteralPath $SharedRoot)) {
         throw "Shared landing directory does not exist: $SharedRoot"
     }
 
-    if (-not (Test-Path -LiteralPath $CompletionMarker)) {
-        throw "Latest Jenkins export did not complete successfully. Completion marker is missing: $CompletionMarker"
+    if (-not (Test-Path -LiteralPath $JenkinsHome)) {
+        throw "Jenkins Home does not exist: $JenkinsHome"
     }
 
-    $MarkerAge = (Get-Date) - (Get-Item -LiteralPath $CompletionMarker).LastWriteTime
+    if (-not (Test-Path -LiteralPath $Marker)) {
+        throw "Latest export did not complete successfully. Marker is missing."
+    }
 
-    Write-Log "Latest successful export age: $([math]::Round($MarkerAge.TotalMinutes, 2)) minutes"
+    $MarkerAge = (Get-Date) - (Get-Item -LiteralPath $Marker).LastWriteTime
+    Write-Log "Latest successful export age: $([math]::Round($MarkerAge.TotalMinutes, 2)) minutes."
 
     if ($MarkerAge.TotalHours -gt 2) {
-        throw "Latest successful export is older than 2 hours. Import aborted to prevent importing stale data."
+        throw "Latest successful export is older than 2 hours. Import aborted."
     }
 
-    if (-not (Test-Path -LiteralPath $TargetJenkinsHome)) {
-        throw "Target Jenkins Home does not exist: $TargetJenkinsHome"
+    $JenkinsStatus = (Get-Service -Name $Service -ErrorAction Stop).Status
+    Write-Log "Jenkins service status: $JenkinsStatus"
+
+    $Changes = @{}
+
+    foreach ($Item in $Items) {
+        $Changes[$Item.Name] = Invoke-Robocopy `
+            -Name $Item.Name `
+            -Source $Item.Source `
+            -Destination $Item.Destination `
+            -Files $Item.Files `
+            -ExcludedDirs $Item.Exclude `
+            -Preview
     }
 
-    $JenkinsService = Get-Service -Name $ServiceName -ErrorAction Stop
+    foreach ($Name in $Changes.Keys) {
+        Write-Log "$Name changed: $($Changes[$Name])"
+    }
 
-    Write-Log "Jenkins service name: $ServiceName"
-    Write-Log "Current Jenkins service status: $($JenkinsService.Status)"
-
-    $PluginsChanged = Test-RobocopyChanges `
-        -Description "plugins" `
-        -Source "$SharedRoot\plugins" `
-        -Destination "$TargetJenkinsHome\plugins" `
-        -FileFilters @(
-            "*.jpi"
-            "*.hpi"
-            "*.jpi.disabled"
-            "*.hpi.disabled"
-            "*.pinned"
-        )
-
-    $UsersChanged = Test-RobocopyChanges `
-        -Description "users" `
-        -Source "$SharedRoot\users" `
-        -Destination "$TargetJenkinsHome\users"
-
-    $JobsChanged = Test-RobocopyChanges `
-        -Description "job configurations" `
-        -Source "$SharedRoot\jobs" `
-        -Destination "$TargetJenkinsHome\jobs" `
-        -ExcludedDirectories @(
-            "builds"
-            "workspace"
-            "indexing"
-            "lastStable"
-            "lastSuccessful"
-        )
-
-    Write-Log "Plugins changed: $PluginsChanged"
-    Write-Log "Users changed: $UsersChanged"
-    Write-Log "Job configurations changed: $JobsChanged"
-
-    if (-not ($PluginsChanged -or $UsersChanged -or $JobsChanged)) {
-        Write-Log "No changes detected."
-        Write-Log "Jenkins will not be restarted."
-        Write-Log "Synchronization import completed with no changes."
+    if (-not ($Changes.Values -contains $true)) {
+        Write-Log "No changes detected. Jenkins will not be restarted."
         exit 0
     }
 
-    if ((Get-Service -Name $ServiceName).Status -ne "Stopped") {
-        Write-Log "Stopping Jenkins service: $ServiceName"
-
-        Stop-Service -Name $ServiceName -Force -ErrorAction Stop
-        (Get-Service -Name $ServiceName).WaitForStatus("Stopped", "00:03:00")
-
-        $JenkinsWasStopped = $true
-        Write-Log "Jenkins service stopped successfully."
-    }
-    else {
-        $JenkinsWasStopped = $true
-        Write-Log "Jenkins service was already stopped."
+    if ((Get-Service -Name $Service).Status -ne "Stopped") {
+        Write-Log "Stopping Jenkins service..."
+        Stop-Service -Name $Service -Force
+        (Get-Service -Name $Service).WaitForStatus("Stopped", "00:03:00")
     }
 
-    Invoke-CheckedRobocopy `
-        -Description "Import plugins" `
-        -Source "$SharedRoot\plugins" `
-        -Destination "$TargetJenkinsHome\plugins" `
-        -FileFilters @(
-            "*.jpi"
-            "*.hpi"
-            "*.jpi.disabled"
-            "*.hpi.disabled"
-            "*.pinned"
-        )
+    $JenkinsWasStopped = $true
+    Write-Log "Jenkins service stopped successfully."
 
-    Invoke-CheckedRobocopy `
-        -Description "Import users" `
-        -Source "$SharedRoot\users" `
-        -Destination "$TargetJenkinsHome\users"
+    foreach ($Item in $Items) {
+        Invoke-Robocopy `
+            -Name $Item.Name `
+            -Source $Item.Source `
+            -Destination $Item.Destination `
+            -Files $Item.Files `
+            -ExcludedDirs $Item.Exclude
+    }
 
-    Invoke-CheckedRobocopy `
-        -Description "Import job configurations" `
-        -Source "$SharedRoot\jobs" `
-        -Destination "$TargetJenkinsHome\jobs" `
-        -ExcludedDirectories @(
-            "builds"
-            "workspace"
-            "indexing"
-            "lastStable"
-            "lastSuccessful"
-        )
-
-    Write-Log "Starting Jenkins service: $ServiceName"
-
-    Start-Service -Name $ServiceName -ErrorAction Stop
-    (Get-Service -Name $ServiceName).WaitForStatus("Running", "00:03:00")
+    Write-Log "Starting Jenkins service..."
+    Start-Service -Name $Service
+    (Get-Service -Name $Service).WaitForStatus("Running", "00:03:00")
 
     $JenkinsWasStopped = $false
-
-    $FinalServiceStatus = (Get-Service -Name $ServiceName).Status
-    Write-Log "Jenkins service status: $FinalServiceStatus"
-
-    if ($FinalServiceStatus -ne "Running") {
-        throw "Jenkins service did not reach the Running state."
-    }
-
-    Write-Log "============================================================"
-    Write-Log "jenkinsnew synchronization import completed successfully"
-    Write-Log "============================================================"
-
+    Write-Log "JenkinsNew synchronization import completed successfully."
     exit 0
 }
 catch {
-    Write-Log "ERROR: Jenkins synchronization import failed."
     Write-Log "ERROR: $($_.Exception.Message)"
 
     if ($JenkinsWasStopped) {
-        Write-Log "Attempting to recover by starting Jenkins."
+        Write-Log "Attempting to restart Jenkins."
 
         try {
-            Start-Service -Name $ServiceName -ErrorAction Stop
-            (Get-Service -Name $ServiceName).WaitForStatus("Running", "00:03:00")
+            Start-Service -Name $Service
+            (Get-Service -Name $Service).WaitForStatus("Running", "00:03:00")
             Write-Log "Jenkins service recovery succeeded."
         }
         catch {
-            Write-Log "CRITICAL: Jenkins service recovery failed."
-            Write-Log "CRITICAL: $($_.Exception.Message)"
+            Write-Log "CRITICAL: Jenkins service recovery failed: $($_.Exception.Message)"
         }
     }
 

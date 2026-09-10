@@ -1,81 +1,36 @@
-# ==============================================================================
-# Jenkins PROD export
-#
-# Source:
-#   E:\Jenkins\Home
-#
-# Destination:
-#   \\HQV-JNKS-APPP03\JenkinsSync
-#
-# Copies:
-#   - Job and folder configurations
-#   - Users
-#   - Plugin archive files
-#
-# Does not copy:
-#   - Build history
-#   - Archived build artifacts
-#   - Workspaces
-#   - Temporary indexing data
-# ==============================================================================
+# Jenkins PROD synchronization
+# Source: E:\Jenkins\Home
+# Target: \\HQV-JNKS-APPP03\JenkinsSync
+# Build history and workspaces are excluded.
 
 $ErrorActionPreference = "Stop"
 
-$SourceJenkinsHome = "E:\Jenkins\Home"
-$SharedFolder      = "\\HQV-JNKS-APPP03\JenkinsSync"
-$CompletionMarker = Join-Path $SharedFolder "_export_success.txt"
-$LogDirectory      = "E:\Jenkins_Sync\logs"
-$LogFile           = Join-Path $LogDirectory "export_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+$JenkinsHome = "E:\Jenkins\Home"
+$SharedRoot  = "\\HQV-JNKS-APPP03\JenkinsSync"
+$Marker      = "$SharedRoot\_export_success.txt"
+$LogDir      = "E:\Jenkins_Sync\logs"
+$LogFile     = "$LogDir\export_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 
-New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-function Write-Log {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Message
-    )
-
-    $Timestamp  = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $LogMessage = "[$Timestamp] $Message"
-
-    Write-Host $LogMessage
-    $LogMessage | Out-File -FilePath $LogFile -Append -Encoding ascii
+function Write-Log($Message) {
+    $Line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
+    Write-Host $Line
+    $Line | Out-File $LogFile -Append -Encoding ascii
 }
 
-function Invoke-CheckedRobocopy {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Description,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Source,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Destination,
-
-        [string[]]$FileFilters = @("*.*"),
-
-        [string[]]$ExcludedDirectories = @()
-    )
-
+function Copy-JenkinsData($Name, $Source, $Destination, $Files, $ExcludedDirs = @()) {
     if (-not (Test-Path -LiteralPath $Source)) {
         throw "Source path does not exist: $Source"
     }
 
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Write-Log "Exporting $Name..."
 
-    Write-Log "Starting: $Description"
-    Write-Log "Source: $Source"
-    Write-Log "Destination: $Destination"
-
-    $RobocopyArguments = @(
+    $RoboArgs = @(
         $Source
         $Destination
-    )
-
-    $RobocopyArguments += $FileFilters
-
-    $RobocopyArguments += @(
+    ) + $Files + @(
         "/E"
         "/Z"
         "/XJ"
@@ -91,86 +46,60 @@ function Invoke-CheckedRobocopy {
         "/LOG+:$LogFile"
     )
 
-    if ($ExcludedDirectories.Count -gt 0) {
-        $RobocopyArguments += "/XD"
-        $RobocopyArguments += $ExcludedDirectories
+    if ($ExcludedDirs.Count -gt 0) {
+        $RoboArgs += "/XD"
+        $RoboArgs += $ExcludedDirs
     }
 
-    & robocopy.exe @RobocopyArguments
-    $RobocopyExitCode = $LASTEXITCODE
+    & robocopy.exe @RoboArgs | Out-Null
+    $ExitCode = $LASTEXITCODE
 
-    Write-Log "$Description completed with Robocopy exit code $RobocopyExitCode."
+    Write-Log "$Name completed with Robocopy exit code $ExitCode."
 
-    if ($RobocopyExitCode -ge 8) {
-        throw "$Description failed with Robocopy exit code $RobocopyExitCode."
-    }
-
-    if (($RobocopyExitCode -band 1) -eq 1) {
-        Write-Log "$Description copied new or modified files."
-    }
-    else {
-        Write-Log "$Description found no new or modified files."
+    if ($ExitCode -ge 8) {
+        throw "$Name export failed with Robocopy exit code $ExitCode."
     }
 }
 
 try {
-    Write-Log "============================================================"
-    Write-Log "Starting Jenkins PROD synchronization export"
-    Write-Log "============================================================"
+    Write-Log "Starting Jenkins PROD synchronization export."
 
-    if (-not (Test-Path -LiteralPath $SourceJenkinsHome)) {
-        throw "Jenkins Home does not exist: $SourceJenkinsHome"
+    if (-not (Test-Path -LiteralPath $JenkinsHome)) {
+        throw "Jenkins Home does not exist: $JenkinsHome"
     }
 
-    if (-not (Test-Path -LiteralPath $SharedFolder)) {
-        throw "Shared folder is unavailable: $SharedFolder"
+    if (-not (Test-Path -LiteralPath $SharedRoot)) {
+        throw "Shared folder is unavailable: $SharedRoot"
     }
 
-    if (Test-Path -LiteralPath $CompletionMarker) {
-        Remove-Item -LiteralPath $CompletionMarker -Force
-        Write-Log "Previous export completion marker removed."
-    }
+    Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
 
-    Invoke-CheckedRobocopy `
-        -Description "Export plugins" `
-        -Source "$SourceJenkinsHome\plugins" `
-        -Destination "$SharedFolder\plugins" `
-        -FileFilters @(
-            "*.jpi"
-            "*.hpi"
-            "*.jpi.disabled"
-            "*.hpi.disabled"
-            "*.pinned"
-        )
+    Copy-JenkinsData `
+        "plugins" `
+        "$JenkinsHome\plugins" `
+        "$SharedRoot\plugins" `
+        @("*.jpi", "*.hpi", "*.jpi.disabled", "*.hpi.disabled", "*.pinned")
 
-    Invoke-CheckedRobocopy `
-        -Description "Export users" `
-        -Source "$SourceJenkinsHome\users" `
-        -Destination "$SharedFolder\users"
+    Copy-JenkinsData `
+        "users" `
+        "$JenkinsHome\users" `
+        "$SharedRoot\users" `
+        @("*.*")
 
-    Invoke-CheckedRobocopy `
-        -Description "Export job configurations" `
-        -Source "$SourceJenkinsHome\jobs" `
-        -Destination "$SharedFolder\jobs" `
-        -ExcludedDirectories @(
-            "builds"
-            "workspace"
-            "indexing"
-            "lastStable"
-            "lastSuccessful"
-        )
+    Copy-JenkinsData `
+        "job configurations" `
+        "$JenkinsHome\jobs" `
+        "$SharedRoot\jobs" `
+        @("*.*") `
+        @("builds", "workspace", "indexing", "lastStable", "lastSuccessful")
 
-    (Get-Date).ToString("o") | Set-Content -LiteralPath $CompletionMarker -Encoding ascii
+    (Get-Date).ToString("o") | Set-Content -LiteralPath $Marker -Encoding ascii
 
-    Write-Log "Completion marker created: $CompletionMarker"
-    Write-Log "============================================================"
-    Write-Log "Jenkins PROD synchronization export completed successfully"
-    Write-Log "============================================================"
-
+    Write-Log "Completion marker created: $Marker"
+    Write-Log "Jenkins PROD synchronization export completed successfully."
     exit 0
 }
 catch {
-    Write-Log "ERROR: Jenkins synchronization export failed."
     Write-Log "ERROR: $($_.Exception.Message)"
     exit 1
 }
