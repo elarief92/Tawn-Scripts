@@ -20,6 +20,9 @@ pipeline {
         BITBUCKET_CLONE_URL = 'https://bitbucket.tawn.com/scm/EI/webmethods-source-code.git'
         BITBUCKET_CREDENTIALS = 'Admin_Bitbucket'
 
+        NO_PROXY = 'localhost,127.0.0.1,.tawn.com,bitbucket.tawn.com,jenkins.tawn.com'
+        no_proxy = 'localhost,127.0.0.1,.tawn.com,bitbucket.tawn.com,jenkins.tawn.com'
+
         EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
         EMAIL_SUBJECT = 'webMethods DEV Synchronization'
     }
@@ -92,6 +95,7 @@ pipeline {
                 ]) {
                     sh '''
                         set -e
+                        set -o pipefail
                         set +x
 
                         mkdir -p "${WORKSPACE}@tmp"
@@ -102,11 +106,12 @@ pipeline {
 
                         tar -C "${SERVER_PACKAGE_ROOT}" --exclude='./Default' --exclude='./default' --exclude='./Wm*' --exclude='./Wx*' --exclude='*/logs' --exclude='*/log' --exclude='*/cache' --exclude='*/temp' --exclude='*/tmp' --exclude='*/stats' --exclude='*/audit' --exclude='*.log' --exclude='*.tmp' --exclude='*.lck' --exclude='*.lock' --exclude='*.bak' -cf - . | tar -C "${SYNC_TEMP}" -xf -
 
-                        if ! find "${SYNC_TEMP}" -mindepth 1 -maxdepth 1 -type d | grep -q .; then
+                        if [ -z "$(find "${SYNC_TEMP}" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]; then
                             echo "ERROR: No business packages were found."
                             exit 1
                         fi
 
+                        echo "Business packages collected successfully."
                         echo "Updating repository IS directory..."
 
                         rm -rf "${WORKSPACE}/IS"
@@ -131,11 +136,13 @@ pipeline {
 
                         COMMIT_DATE="$(date '+%Y-%m-%d %H:%M:%S')"
 
-                        git commit -m "DEV IS package changes automatically synchronized on ${COMMIT_DATE}"
+                        git commit \
+                            -m "DEV IS package changes automatically synchronized on ${COMMIT_DATE}" \
+                            -- IS/
 
                         BASIC_AUTH="$(printf '%s:%s' "${BB_USER}" "${BB_PASSWORD}" | base64 | tr -d '\\n')"
 
-                        git -c http.extraHeader="Authorization: Basic ${BASIC_AUTH}" push "${BITBUCKET_CLONE_URL}" "HEAD:refs/heads/${TARGET_BRANCH}"
+                        git -c http.proxy= -c https.proxy= -c http.extraHeader="Authorization: Basic ${BASIC_AUTH}" push "${BITBUCKET_CLONE_URL}" "HEAD:refs/heads/${TARGET_BRANCH}"
 
                         git rev-parse HEAD > "${WORKSPACE}/.sync_commit"
                         echo "PUSHED" > "${WORKSPACE}/.sync_result"

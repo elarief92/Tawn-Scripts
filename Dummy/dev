@@ -1,84 +1,149 @@
-stage("Deploy DIG-PRD-93"){
-        agent{label 'DIG-PRD-93'}
-            steps{
-                dir('/u01/apache-tomcat/webapps') {
-                sh label: '', script: 'sudo rm -rf medical-malpractice'
-                sleep 2
-                sh label: '', script: 'sudo mkdir medical-malpractice'
-                sleep 2
-                }
-            dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
-            sh label: '', script: 'sudo cp -r medical-malpractice/* /u01/apache-tomcat/webapps/medical-malpractice/'
-            }
-         }
-      }
-      stage("Deploy DIG-PRD-94"){
-        agent{label 'DIG-PRD-94'}
-            steps{
-                dir('/u01/apache-tomcat/webapps') {
-                sh label: '', script: 'sudo rm -rf medical-malpractice'
-                sleep 2
-                sh label: '', script: 'sudo mkdir medical-malpractice'
-                sleep 2
-                }
-            dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
-            sh label: '', script: 'sudo cp -r medical-malpractice/* /u01/apache-tomcat/webapps/medical-malpractice/'
-            }
-         }
-      }
-      stage("Deploy DIG-PRD-95"){
-        agent{label 'DIG-PRD-95'}
-            steps{
-                dir('/u01/apache-tomcat/webapps') {
-                sh label: '', script: 'sudo rm -rf medical-malpractice'
-                sleep 2
-                sh label: '', script: 'sudo mkdir medical-malpractice'
-                sleep 2
-                }
-            dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
-            sh label: '', script: 'sudo cp -r medical-malpractice/* /u01/apache-tomcat/webapps/medical-malpractice/'
-            }
-         }
-      }
-      stage("Deploy DIG-PRD-96"){
-        agent{label 'DIG-PRD-96'}
-            steps{
-                dir('/u01/apache-tomcat/webapps') {
-                sh label: '', script: 'sudo rm -rf medical-malpractice'
-                sleep 2
-                sh label: '', script: 'sudo mkdir medical-malpractice'
-                sleep 2
-                }
-            dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
-            sh label: '', script: 'sudo cp -r medical-malpractice/* /u01/apache-tomcat/webapps/medical-malpractice/'
-            }
-         }
-      }
-      stage("Deploy DIG-PRD-97"){
-        agent{label 'DIG-PRD-97'}
-            steps{
-                dir('/u01/apache-tomcat/webapps') {
-                sh label: '', script: 'sudo rm -rf medical-malpractice'
-                sleep 2
-                sh label: '', script: 'sudo mkdir medical-malpractice'
-                sleep 2
-                }
-            dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
-            sh label: '', script: 'sudo cp -r medical-malpractice/* /u01/apache-tomcat/webapps/medical-malpractice/'
-            }
-         }
-      }
-      stage("Deploy DIG-PRD-99"){
-        agent{label 'DIG-PRD-99'}
-            steps{
-                dir('/u01/apache-tomcat/webapps') {
-                sh label: '', script: 'sudo rm -rf medical-malpractice'
-                sleep 2
-                sh label: '', script: 'sudo mkdir medical-malpractice'
-                sleep 2
-                }
-            dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
-            sh label: '', script: 'sudo cp -r medical-malpractice/* /u01/apache-tomcat/webapps/medical-malpractice/'
-            }
-         }
-      }
+stage("Deploy DIG-PRD-93") {
+    agent { label 'DIG-PRD-93' }
+
+    steps {
+        sh label: 'Remove existing deployment', script: '''
+            sudo rm -rf /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        sh label: 'Create deployment directory', script: '''
+            sudo mkdir -p /u01/apache-tomcat/webapps/medical-malpractice
+            sudo chown appadm:appadm /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
+            sh label: 'Copy application files', script: '''
+                cp -a medical-malpractice/. /u01/apache-tomcat/webapps/medical-malpractice/
+            '''
+        }
+    }
+}
+
+stage("Deploy DIG-PRD-94") {
+    agent { label 'DIG-PRD-94' }
+
+    steps {
+        sh label: 'Remove existing deployment', script: '''
+            sudo rm -rf /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        sh label: 'Create deployment directory', script: '''
+            sudo mkdir -p /u01/apache-tomcat/webapps/medical-malpractice
+            sudo chown appadm:appadm /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
+            sh label: 'Copy application files', script: '''
+                cp -a medical-malpractice/. /u01/apache-tomcat/webapps/medical-malpractice/
+            '''
+        }
+    }
+}
+
+stage("Deploy DIG-PRD-95") {
+    agent { label 'DIG-PRD-95' }
+
+    steps {
+        sh label: 'Remove existing deployment', script: '''
+            sudo rm -rf /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        sh label: 'Create deployment directory', script: '''
+            sudo mkdir -p /u01/apache-tomcat/webapps/medical-malpractice
+            sudo chown appadm:appadm /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
+            sh label: 'Copy application files', script: '''
+                cp -a medical-malpractice/. /u01/apache-tomcat/webapps/medical-malpractice/
+            '''
+        }
+    }
+}
+
+stage("Deploy DIG-PRD-96") {
+    agent { label 'DIG-PRD-96' }
+
+    steps {
+        sh label: 'Remove existing deployment', script: '''
+            sudo rm -rf /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        sh label: 'Create deployment directory', script: '''
+            sudo mkdir -p /u01/apache-tomcat/webapps/medical-malpractice
+            sudo chown appadm:appadm /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
+            sh label: 'Copy application files', script: '''
+                cp -a medical-malpractice/. /u01/apache-tomcat/webapps/medical-malpractice/
+            '''
+        }
+    }
+}
+
+stage("Deploy DIG-PRD-97") {
+    agent { label 'DIG-PRD-97' }
+
+    steps {
+        sh label: 'Remove existing deployment', script: '''
+            sudo rm -rf /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        sh label: 'Create deployment directory', script: '''
+            sudo mkdir -p /u01/apache-tomcat/webapps/medical-malpractice
+            sudo chown appadm:appadm /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
+            sh label: 'Copy application files', script: '''
+                cp -a medical-malpractice/. /u01/apache-tomcat/webapps/medical-malpractice/
+            '''
+        }
+    }
+}
+
+stage("Deploy DIG-PRD-99") {
+    agent { label 'DIG-PRD-99' }
+
+    steps {
+        sh label: 'Remove existing deployment', script: '''
+            sudo rm -rf /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        sh label: 'Create deployment directory', script: '''
+            sudo mkdir -p /u01/apache-tomcat/webapps/medical-malpractice
+            sudo chown appadm:appadm /u01/apache-tomcat/webapps/medical-malpractice
+        '''
+
+        sleep 2
+
+        dir('/home/appadm/jenkins/workspace/Digital Experience Platforms/PROD/FE-MEDICAL-MALPRACTICE-V3-Deploy/FE-MEDICAL-MALPRACTICE-V3/dist/apps/') {
+            sh label: 'Copy application files', script: '''
+                cp -a medical-malpractice/. /u01/apache-tomcat/webapps/medical-malpractice/
+            '''
+        }
+    }
+}
