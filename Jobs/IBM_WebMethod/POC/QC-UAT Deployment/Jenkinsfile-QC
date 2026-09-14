@@ -2,7 +2,7 @@ properties([
     parameters([
         string(name: 'EPIC_NAME', defaultValue: '', description: 'Use a Valid Jira Epic Number'),
 
-        [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select QC target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01"]'], script: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01"]']]],
+        [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select QC target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["QC_IS_181"]'], script: [classpath: [], sandbox: true, script: 'return ["QC_IS_181"]']]],
 
         [
             $class: 'ChoiceParameter',
@@ -208,18 +208,25 @@ pipeline {
                     echo "Branch selected for checkout: ${env.BRANCH_NAME}"
                     echo "Running on Jenkins agent: ${env.NODE_NAME}"
 
-                    bbs_checkout(
+                    deleteDir()
+
+                    checkout([
+                        $class: 'GitSCM',
                         branches: [[name: "*/${env.BRANCH_NAME}"]],
-                        credentialsId: 'Admin_Bitbucket',
-                        id: '06c55797-80ad-4cb9-bea7-299d2a91506e',
-                        projectName: 'EI',
-                        repositoryName: 'webmethods-source-code',
-                        serverId: '2492752c-5622-4c29-9972-c1c0f572b1f6',
-                        cloneOptions: [
-                            shallow: false
-                        ],
-                        cleanBeforeCheckout: true
-                    )
+                        userRemoteConfigs: [[
+                            url: 'https://bitbucket.tawn.com/scm/EI/webmethods-source-code.git',
+                            credentialsId: 'Admin_Bitbucket'
+                        ]],
+                        extensions: [
+                            [$class: 'CloneOption',
+                                shallow: true,
+                                depth: 1,
+                                noTags: true,
+                                honorRefspec: true,
+                                timeout: 30
+                            ]
+                        ]
+                    ])
                 }
             }
         }
@@ -847,7 +854,7 @@ def buildMapTargetAliases(targets) {
 
 def getTargetConfigs(serverNames) {
     def targetConfigMap = [
-        'HQV-SAG-IPU01': [alias: 'HQV-SAG-IPU01', host: '10.24.7.181', port: '5555']
+        'QC_IS_181': [alias: 'QC_IS_181', host: '10.24.7.181', port: '5555']
     ]
 
     serverNames.each { targetName ->
