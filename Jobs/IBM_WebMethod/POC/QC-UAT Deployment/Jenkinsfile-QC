@@ -2,7 +2,7 @@ properties([
     parameters([
         string(name: 'EPIC_NAME', defaultValue: '', description: 'Use a Valid Jira Epic Number'),
 
-        [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select QC target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01_QC"]'], script: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01_QC"]']]],
+        [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select QC target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01"]'], script: [classpath: [], sandbox: true, script: 'return ["HQV-SAG-IPU01"]']]],
 
         [
             $class: 'ChoiceParameter',
@@ -525,7 +525,7 @@ pipeline {
 def cleanExistingDeployerProject() {
     withCredentials([
         usernamePassword(
-            credentialsId: 'IS_Target_Preprod',
+            credentialsId: 'API_IS_Deployer',
             usernameVariable: 'DEPLOYER_USER',
             passwordVariable: 'DEPLOYER_PWD'
         )
@@ -593,12 +593,12 @@ def createDeployerProject() {
 
     withCredentials([
         usernamePassword(
-            credentialsId: 'IS_Target_Preprod',
+            credentialsId: 'API_IS_Deployer',
             usernameVariable: 'DEPLOYER_USER',
             passwordVariable: 'DEPLOYER_PWD'
         ),
         usernamePassword(
-            credentialsId: 'IS_Target_Preprod',
+            credentialsId: 'API_IS_Target',
             usernameVariable: 'IS_USER',
             passwordVariable: 'IS_PWD'
         )
@@ -618,7 +618,7 @@ def createDeployerProject() {
 def createSnapshot() {
     withCredentials([
         usernamePassword(
-            credentialsId: 'IS_Target_Preprod',
+            credentialsId: 'API_IS_Deployer',
             usernameVariable: 'DEPLOYER_USER',
             passwordVariable: 'DEPLOYER_PWD'
         )
@@ -651,7 +651,7 @@ def deployCandidate() {
 
     withCredentials([
         usernamePassword(
-            credentialsId: 'IS_Target_Preprod',
+            credentialsId: 'API_IS_Deployer',
             usernameVariable: 'DEPLOYER_USER',
             passwordVariable: 'DEPLOYER_PWD'
         )
@@ -687,7 +687,7 @@ def rollbackDeployment() {
 
     withCredentials([
         usernamePassword(
-            credentialsId: 'IS_Target_Preprod',
+            credentialsId: 'API_IS_Deployer',
             usernameVariable: 'DEPLOYER_USER',
             passwordVariable: 'DEPLOYER_PWD'
         )
@@ -847,7 +847,7 @@ def buildMapTargetAliases(targets) {
 
 def getTargetConfigs(serverNames) {
     def targetConfigMap = [
-        'HQV-SAG-IPU01_QC': [alias: 'HQV-SAG-IPU01', host: '10.24.7.181', port: '5555']
+        'HQV-SAG-IPU01': [alias: 'HQV-SAG-IPU01', host: '10.24.7.181', port: '5555']
     ]
 
     serverNames.each { targetName ->
