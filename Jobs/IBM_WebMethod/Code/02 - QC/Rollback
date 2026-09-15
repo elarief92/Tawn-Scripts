@@ -182,7 +182,7 @@ pipeline {
 
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'IS_Target_Preprod',
+                        credentialsId: 'API_IS_Deployer',
                         usernameVariable: 'DEPLOYER_USER',
                         passwordVariable: 'DEPLOYER_PWD'
                     )
