@@ -21,7 +21,7 @@ properties([
 ])
 
 pipeline {
-    agent { label 'SAG-PREP-IPP02' }
+    agent { label 'HQV-SAG-DEPP01' }
 
     options {
         disableConcurrentBuilds()
@@ -30,7 +30,7 @@ pipeline {
     }
 
     environment {
-        SAG_HOME = '/sag/be1015'
+        SAG_HOME = '/sag/dbp1011'
 
         DEPLOYER_BIN = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
         DEPLOYER_CMD = "${DEPLOYER_BIN}/Deployer.sh"
@@ -110,7 +110,7 @@ pipeline {
 
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'IS_Target_Preprod',
+                        credentialsId: 'API_IS_Deployer',
                         usernameVariable: 'DEPLOYER_USER',
                         passwordVariable: 'DEPLOYER_PWD'
                     )
@@ -147,7 +147,7 @@ pipeline {
 
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'IS_Target_Preprod',
+                        credentialsId: 'API_IS_Deployer',
                         usernameVariable: 'DEPLOYER_USER',
                         passwordVariable: 'DEPLOYER_PWD'
                     )
