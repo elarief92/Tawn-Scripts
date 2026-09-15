@@ -107,6 +107,7 @@ pipeline {
 
     options {
         disableConcurrentBuilds()
+        lock(resource: 'webMethods-Deployer-shared')
         buildDiscarder(logRotator(numToKeepStr: '3'))
         timestamps()
         skipDefaultCheckout(true)
@@ -276,12 +277,11 @@ pipeline {
             }
         }
 
-        stage('Clean Existing Deployer Project') {
+        stage('Clean Existing Deployment Candidate') {
             steps {
-                cleanExistingDeployerProject()
+                cleanExistingDeploymentCandidate()
             }
         }
-
         stage('Prepare Build Source') {
             steps {
                 sh '''
@@ -443,14 +443,24 @@ pipeline {
             }
         }
 
-        stage('Clean Failed Deployer Project') {
+        stage('Clean Failed Deployment Candidate') {
             steps {
                 script {
-                    if (fileExists('.deployment_failed')) {
-                        echo "Cleaning failed Deployer project: ${params.EPIC_NAME}"
-                        cleanExistingDeployerProject()
+                    if (!fileExists('.deployment_failed')) {
+                        echo 'Cleanup skipped because deployment succeeded.'
+                    } else if (
+                        fileExists('.rollback_status') &&
+                        readFile('.rollback_status').trim() == 'SUCCESS'
+                    ) {
+                        echo "Automatic rollback succeeded."
+                        echo "Deleting failed candidate: ${params.EPIC_NAME}_${env.ENVIRONMENT_NAME}"
+                        echo "Keeping shared project: ${params.EPIC_NAME}"
+
+                        cleanExistingDeploymentCandidate()
                     } else {
-                        echo 'Failed-project cleanup skipped because deployment succeeded.'
+                        echo 'Candidate retained because automatic rollback did not succeed.'
+                        echo "Candidate: ${params.EPIC_NAME}_${env.ENVIRONMENT_NAME}"
+                        echo "Project: ${params.EPIC_NAME}"
                     }
                 }
             }
@@ -529,7 +539,7 @@ pipeline {
     }
 }
 
-def cleanExistingDeployerProject() {
+def cleanExistingDeploymentCandidate() {
     withCredentials([
         usernamePassword(
             credentialsId: 'API_IS_Deployer',
@@ -538,26 +548,20 @@ def cleanExistingDeployerProject() {
         )
     ]) {
         sh '''
-            echo "Cleaning existing Deployer resources for project: ${EPIC_NAME}"
+            CANDIDATE_NAME="${EPIC_NAME}_${ENVIRONMENT_NAME}"
+
+            echo "Cleaning candidate: ${CANDIDATE_NAME}"
+            echo "Keeping shared project: ${EPIC_NAME}"
 
             chmod +x "${DEPLOYER_CMD}" || true
 
             "${DEPLOYER_CMD}" --delete \
                 -project "${EPIC_NAME}" \
-                -dc "${EPIC_NAME}" \
+                -dc "${CANDIDATE_NAME}" \
                 -host "${DEPLOYER_HOST}" \
                 -port "${DEPLOYER_PORT}" \
                 -user "${DEPLOYER_USER}" \
                 -pwd "${DEPLOYER_PWD}" || true
-
-            "${DEPLOYER_CMD}" --delete \
-                -project "${EPIC_NAME}" \
-                -host "${DEPLOYER_HOST}" \
-                -port "${DEPLOYER_PORT}" \
-                -user "${DEPLOYER_USER}" \
-                -pwd "${DEPLOYER_PWD}" || true
-
-            echo "Cleanup completed."
         '''
     }
 }
@@ -635,7 +639,7 @@ def createSnapshot() {
                 chmod +x "${DEPLOYER_CMD}" || true
 
                 "${DEPLOYER_CMD}" --checkpoint \
-                    -dc "${EPIC_NAME}" \
+                    -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" \
                     -project "${EPIC_NAME}" \
                     -host "${DEPLOYER_HOST}" \
                     -port "${DEPLOYER_PORT}" \
@@ -669,7 +673,7 @@ def deployCandidate() {
 
                 "${DEPLOYER_CMD}" --deploy \
                     -project "${EPIC_NAME}" \
-                    -dc "${EPIC_NAME}" \
+                    -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" \
                     -host "${DEPLOYER_HOST}" \
                     -port "${DEPLOYER_PORT}" \
                     -user "${DEPLOYER_USER}" \
@@ -707,7 +711,7 @@ def rollbackDeployment() {
 
                 "${DEPLOYER_CMD}" --rollback \
                     -project "${EPIC_NAME}" \
-                    -dc "${EPIC_NAME}" \
+                    -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" \
                     -host "${DEPLOYER_HOST}" \
                     -port "${DEPLOYER_PORT}" \
                     -user "${DEPLOYER_USER}" \
@@ -816,13 +820,14 @@ def getSelected(val) {
 
 def buildNames(epic) {
     def e = epic.trim()
+    def environmentName = env.ENVIRONMENT_NAME.trim()
 
     [
         PROJECT_NAME: e,
-        PROJECT_DESC: "Project created for EPIC ${e} on ${env.ENVIRONMENT_NAME} environment - ${new Date().format('yyyy-MM-dd HH:mm:ss')}",
-        DEPLOYMENT_SET_NAME: "${e}_DEPLOYMENT_SET",
-        DEPLOYMENT_MAP_NAME: "${e}_DEPLOYMENT_MAP",
-        CANDIDATE_NAME: e
+        PROJECT_DESC: "Project created for EPIC ${e}",
+        DEPLOYMENT_SET_NAME: "${e}_${environmentName}_DEPLOYMENT_SET",
+        DEPLOYMENT_MAP_NAME: "${e}_${environmentName}_DEPLOYMENT_MAP",
+        CANDIDATE_NAME: "${e}_${environmentName}"
     ]
 }
 
