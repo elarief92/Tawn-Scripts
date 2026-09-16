@@ -1,0 +1,185 @@
+properties([
+    parameters([
+        string(name: 'EPIC_NAME', defaultValue: '', description: 'Same EPIC used in the UAT deployment job'),
+        booleanParam(name: 'CONFIRM_ROLLBACK', defaultValue: false, description: 'Must be checked before rollback execution')
+    ])
+])
+
+pipeline {
+    agent { label 'SAG-PREP-IPP02' }
+
+    options {
+        disableConcurrentBuilds()
+        lock(resource: 'webMethods-Deployer-POC-shared')
+        buildDiscarder(logRotator(numToKeepStr: '5'))
+        timestamps()
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        ENVIRONMENT_NAME = 'UAT'
+        SAG_HOME = '/sag/be1015'
+        DEPLOYER_BIN = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
+        DEPLOYER_CMD = "${DEPLOYER_BIN}/Deployer.sh"
+        DEPLOYER_HOST = '127.0.0.1'
+        DEPLOYER_PORT = '5555'
+        GENERATED_DIR = "${WORKSPACE}/generated"
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+        EMAIL_SUBJECT = 'API UAT Rollback'
+        APPLICATION_NAME = 'webMethods API'
+    }
+
+    stages {
+        stage('Validate Input') {
+            steps {
+                script {
+                    String epicName = params.EPIC_NAME?.trim()
+
+                    if (!epicName) {
+                        error('EPIC_NAME is required')
+                    }
+
+                    if (!(epicName ==~ /[A-Za-z0-9._-]+/)) {
+                        error('EPIC_NAME may contain only letters, numbers, dots, underscores and hyphens')
+                    }
+
+                    if (!params.CONFIRM_ROLLBACK) {
+                        error('CONFIRM_ROLLBACK must be checked before running rollback')
+                    }
+
+                    if (!fileExists(env.DEPLOYER_CMD)) {
+                        error("Deployer command not found: ${env.DEPLOYER_CMD}")
+                    }
+
+                    env.EPIC_NAME = epicName
+                    env.CANDIDATE_NAME = "${epicName}_${env.ENVIRONMENT_NAME}"
+                    env.MAP_NAME = "${epicName}_${env.ENVIRONMENT_NAME}_DEPLOYMENT_MAP"
+                    env.SET_NAME = "${epicName}_${env.ENVIRONMENT_NAME}_DEPLOYMENT_SET"
+
+                    currentBuild.displayName = "ROLLBACK-${env.CANDIDATE_NAME}"
+                    currentBuild.description = "Rollback ${env.CANDIDATE_NAME}"
+
+                    sh 'rm -rf "${GENERATED_DIR}" && mkdir -p "${GENERATED_DIR}"'
+                }
+            }
+        }
+
+        stage('Approval Before Rollback') {
+            steps {
+                script {
+                    env.APPROVER_COMMENT = input(
+                        message: "Confirm rollback for ${env.CANDIDATE_NAME}?",
+                        ok: 'Rollback Now',
+                        parameters: [
+                            string(name: 'APPROVER_COMMENT', defaultValue: '', description: 'Reason / approval comment')
+                        ]
+                    ).toString()
+                }
+            }
+        }
+
+        stage('Send Rollback Start Email') {
+            steps {
+                sendRollbackEmail('Started', '#f39c12', "Rollback has started for ${env.CANDIDATE_NAME}.")
+            }
+        }
+
+        stage('Execute Rollback') {
+            steps {
+                script {
+                    int rollbackStatus = executeRollback()
+                    if (rollbackStatus != 0) {
+                        error("Rollback failed with exit code ${rollbackStatus}")
+                    }
+                }
+            }
+        }
+
+    }
+
+    post {
+        success {
+            script {
+                sendRollbackEmail('Success', '#27ae60', "Rollback completed successfully for ${env.CANDIDATE_NAME}.")
+            }
+        }
+        failure {
+            script {
+                sendRollbackEmail('Failed', '#c0392b', "Rollback failed for ${env.CANDIDATE_NAME ?: params.EPIC_NAME}.")
+            }
+        }
+        always {
+            archiveArtifacts artifacts: 'generated/*.log, generated/*.xml', allowEmptyArchive: true
+        }
+    }
+}
+
+def executeRollback() {
+    int status
+
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'IS_Target_Preprod',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        status = sh(
+            script: '''
+                set +x
+                set -o pipefail
+                chmod +x "${DEPLOYER_CMD}" || true
+
+                "${DEPLOYER_CMD}" --rollback \
+                    -project "${EPIC_NAME}" \
+                    -dc "${CANDIDATE_NAME}" \
+                    -host "${DEPLOYER_HOST}" \
+                    -port "${DEPLOYER_PORT}" \
+                    -user "${DEPLOYER_USER}" \
+                    -pwd "${DEPLOYER_PWD}" \
+                    -reportFilePath "${GENERATED_DIR}/rollback-report.xml" \
+                    2>&1 | tee "${GENERATED_DIR}/rollback.log"
+            ''',
+            returnStatus: true
+        )
+    }
+
+    if (status != 0 && fileExists("${env.GENERATED_DIR}/rollback.log")) {
+        String rollbackLog = readFile("${env.GENERATED_DIR}/rollback.log")
+        if (rollbackLog.contains('[DEP.0002.0148]')) {
+            error("Rollback unavailable: candidate ${env.CANDIDATE_NAME} does not exist.")
+        }
+        if (rollbackLog.contains('[DEP.0002.0153]')) {
+            error("Rollback unavailable: candidate ${env.CANDIDATE_NAME} has no active checkpoint.")
+        }
+    }
+
+    return status
+}
+
+def sendRollbackEmail(status, color, message) {
+    emailext(
+        to: env.EMAIL_RECIPIENTS,
+        subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status}",
+        recipientProviders: [[$class: 'DevelopersRecipientProvider']],
+        mimeType: 'text/html',
+        body: """\
+            <!DOCTYPE html>
+            <html lang="en">
+            <body style="font-family: Arial, sans-serif; color: #34495e;">
+                <div style="width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+                    <h2>TAWUNIYA - ${env.ENVIRONMENT_NAME} Rollback ${status}</h2>
+                    <p>${message}</p>
+                    <p><strong>Project:</strong> ${params.EPIC_NAME}</p>
+                    <p><strong>Candidate:</strong> ${env.CANDIDATE_NAME ?: 'N/A'}</p>
+                    <p><strong>Deployment Map:</strong> ${env.MAP_NAME ?: 'N/A'}</p>
+                    <p><strong>Deployment Set:</strong> ${env.SET_NAME ?: 'N/A'}</p>
+                    <p><strong>Approval Comment:</strong> ${env.APPROVER_COMMENT ?: 'N/A'}</p>
+                    <p><strong>Status:</strong> <span style="color: ${color}; font-weight: bold;">${status}</span></p>
+                    <p><a href="${env.BUILD_URL}">View Jenkins Build</a></p>
+                </div>
+            </body>
+            </html>
+        """
+    )
+}

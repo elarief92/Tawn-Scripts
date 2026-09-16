@@ -759,7 +759,7 @@ def sendDeploymentEmail(status, color, message, targetServers) {
 
     emailext(
         to: env.EMAIL_RECIPIENTS,
-        subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status}",
+        subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status} - ${new Date().format('yyyy-MM-dd HH:mm:ss')}",
         recipientProviders: [[$class: 'DevelopersRecipientProvider']],
         mimeType: 'text/html',
         body: """\
