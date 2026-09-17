@@ -128,6 +128,7 @@ pipeline {
 
         TEMP_SRC = "${WORKSPACE}/.tmp_build_src"
         BUILD_OUTPUT_DIR = '/sag/jenkins/webmethods-deployer-poc/build_output'
+        PROJECT_MANIFEST_DIR = '/sag/jenkins/webmethods-deployer-poc/project-manifests'
         GENERATED_DIR = "${WORKSPACE}/generated"
         GENERATED_XML = "${WORKSPACE}/generated/Deployment_ProjectAutomator.xml"
         BUILD_LOG_FILE = "${WORKSPACE}/generated/abe-build.log"
@@ -416,10 +417,12 @@ pipeline {
         stage('Configure Shared Deployer Project') {
             steps {
                 script {
-                    if (SHARED_PROJECT_EXISTS) {
-                        updateDeploymentSet(SELECTED_PACKAGES)
-                    } else {
+                    if (!SHARED_PROJECT_EXISTS) {
                         createDeployerProject()
+                        createSharedPackageManifest(SELECTED_PACKAGES)
+                    } else {
+                        validateSharedPackageManifest(SELECTED_PACKAGES)
+                        echo 'The requested packages match the shared EPIC package manifest. Deployment-set updates skipped to preserve existing checkpoints.'
                     }
                 }
             }
@@ -666,13 +669,157 @@ def createDeployerProject() {
     }
 }
 
-def updateDeploymentSet(packages) {
+def sharedPackageManifestPath() {
+    return "${env.PROJECT_MANIFEST_DIR}/${params.EPIC_NAME.trim()}.packages"
+}
+
+def canonicalPackageList(packages) {
+    return packages.collect { it.trim() }.findAll { it }.unique().sort()
+}
+
+def createSharedPackageManifest(packages) {
+    def packageList = canonicalPackageList(packages)
+    def manifestPath = sharedPackageManifestPath()
+
+    sh "mkdir -p '${env.PROJECT_MANIFEST_DIR}'"
+    writeFile(
+        file: manifestPath,
+        text: packageList.join('\n') + '\n',
+        encoding: 'UTF-8'
+    )
+
+    echo "Created shared package manifest for ${params.EPIC_NAME}: ${packageList.join(', ')}"
+}
+
+def validateSharedPackageManifest(packages) {
+    def manifestPath = sharedPackageManifestPath()
+
+    if (!fileExists(manifestPath)) {
+        echo "WARNING: Existing project ${params.EPIC_NAME} has no shared package manifest."
+        echo 'Initializing its manifest once from the package list selected for this build.'
+        createSharedPackageManifest(packages)
+        echo 'Legacy project manifest initialized. Deployment-set updates remain skipped to preserve existing checkpoints.'
+        return
+    }
+
+    def expectedPackages = readFile(manifestPath)
+        .readLines()
+        .collect { it.trim() }
+        .findAll { it }
+        .unique()
+        .sort()
+    def requestedPackages = canonicalPackageList(packages)
+
+    if (requestedPackages != expectedPackages) {
+        error(
+            "Package selection does not match the shared project ${params.EPIC_NAME}. " +
+            "Expected: ${expectedPackages.join(', ')}. " +
+            "Requested: ${requestedPackages.join(', ')}. " +
+            'Use the same package list for QC and UAT. For a different list, create a new EPIC project.'
+        )
+    }
+}
+
+def deploymentSetRequiresUpdate(packages, environmentName) {
+    def epic = params.EPIC_NAME.trim()
+    def deploymentSetName = "${epic}_${environmentName}_DEPLOYMENT_SET"
+    def pageFile = "${env.GENERATED_DIR}/${environmentName}-current-deployment-set.html"
+    def currentFile = "${env.GENERATED_DIR}/${environmentName}-current-deployment-set-fields.txt"
+    def expectedFile = "${env.GENERATED_DIR}/${environmentName}-expected-deployment-set-fields.txt"
+    def expectedFields = packages.collect { pkg ->
+        "${env.REPO_ALIAS}\$IS\$${pkg}\$${pkg}\$COMPOSITE_INCL"
+    }.sort()
+
+    writeFile(
+        file: expectedFile,
+        text: expectedFields.join('\n') + '\n',
+        encoding: 'UTF-8'
+    )
+
+    int comparisonStatus
+
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'IS_Target_Preprod',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        comparisonStatus = sh(
+            script: """
+                set +x
+
+                curl --noproxy '*' \\
+                    --silent \\
+                    --show-error \\
+                    --fail \\
+                    --connect-timeout 5 \\
+                    --max-time 120 \\
+                    --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" \\
+                    --get \\
+                    --data-urlencode 'projectName=${epic}' \\
+                    --data-urlencode 'bundleName=${deploymentSetName}' \\
+                    "\${DEPLOYER_HTTP_URL}" \\
+                    --output '${pageFile}' || exit 20
+
+                python3 - '${pageFile}' '${currentFile}' <<'PY'
+from html.parser import HTMLParser
+import sys
+
+class CheckedCompositeParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.names = set()
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != 'input':
+            return
+        values = {key.lower(): value for key, value in attrs}
+        name = values.get('name')
+        if 'checked' in values and name and name.endswith(chr(36) + 'COMPOSITE_INCL'):
+            self.names.add(name)
+
+parser = CheckedCompositeParser()
+with open(sys.argv[1], encoding='utf-8', errors='replace') as source:
+    parser.feed(source.read())
+
+with open(sys.argv[2], 'w', encoding='utf-8') as output:
+    for name in sorted(parser.names):
+        output.write(name + chr(10))
+PY
+
+                if cmp -s '${expectedFile}' '${currentFile}'; then
+                    exit 0
+                fi
+
+                echo 'Current deployment-set composites:'
+                sed 's/^/  /' '${currentFile}'
+                echo 'Requested deployment-set composites:'
+                sed 's/^/  /' '${expectedFile}'
+                exit 10
+            """,
+            returnStatus: true
+        )
+    }
+
+    if (comparisonStatus == 0) {
+        return false
+    }
+
+    if (comparisonStatus == 10) {
+        return true
+    }
+
+    error("Unable to inspect deployment set ${deploymentSetName}; comparison exited with code ${comparisonStatus}.")
+}
+
+def updateDeploymentSet(packages, environmentName) {
     def packageChecks = packages.collect { pkg ->
         def fieldName = "${env.REPO_ALIAS}\$IS\$${pkg}\$${pkg}\$COMPOSITE_INCL"
         "grep -Fq '${fieldName}' \"\${GENERATED_DIR}/available-composites.html\""
     }.join('\n            ')
     def epic = params.EPIC_NAME.trim()
-    def deploymentSetName = "${epic}_${env.ENVIRONMENT_NAME}_DEPLOYMENT_SET"
+    def deploymentSetName = "${epic}_${environmentName}_DEPLOYMENT_SET"
     def packageArguments = packages.collect { pkg ->
         def fieldName = "${env.REPO_ALIAS}\$IS\$${pkg}\$${pkg}\$COMPOSITE_INCL"
         "--data-urlencode '${fieldName}=COMPOSITE_INCL'"
