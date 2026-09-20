@@ -1,0 +1,41 @@
+# Git Rollback Steps
+
+```bash
+# Clone repository
+git clone <REPO_URL>
+
+# Enter repository
+cd <REPO_NAME>
+
+# Checkout required branch
+git checkout <BRANCH>
+
+# Check commit history
+git log
+
+# Reset to required commit
+git reset --hard <COMMIT_ID>
+
+# Push rollback
+git push <REPO_URL> <BRANCH> --force
+```
+
+https://bitbucket.tawn.com/scm/doc/express-server.git
+
+############################################                  Example:                  ############################################
+
+```bash
+git clone https://bitbucket.tawn.com/scm/dxp/dh-sales-v4.git
+
+cd dh-sales-v4
+
+git checkout DEV
+
+git log
+
+git reset --hard 8f3a2c1
+
+git push https://bitbucket.tawn.com/scm/dxp/dh-sales-v4.git DEV --force
+```
+
+**Note:** Verify the `<COMMIT_ID>` and `<BRANCH>` before the force push because `--force` rewrites the remote branch history.

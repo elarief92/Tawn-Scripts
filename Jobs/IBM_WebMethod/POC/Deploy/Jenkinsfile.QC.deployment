@@ -132,7 +132,7 @@ pipeline {
         GENERATED_XML = "${WORKSPACE}/generated/Deployment_ProjectAutomator.xml"
         BUILD_LOG_FILE = "${WORKSPACE}/generated/abe-build.log"
 
-        TEMPLATE_XML = '01-deployer/templates/ProjectAutomator.Repository.template.xml'
+        TEMPLATE_XML = '01-deployer/templates/ProjectAutomator.Repository.POC.template.xml'
 
         DEPLOYER_HOST = '127.0.0.1'
         DEPLOYER_PORT = '5555'

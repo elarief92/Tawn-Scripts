@@ -1,0 +1,1232 @@
+properties([
+    parameters([
+        string(name: 'EPIC_NAME', defaultValue: '', description: 'Use a Valid Jira Epic Number'),
+        [$class: 'ChoiceParameter', choiceType: 'PT_SINGLE_SELECT', name: 'TARGET_SCOPE', description: 'Select one PROD cluster node alias', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["PROD_IS1_20", "PROD_IS2_21", "PROD_IS3_22", "PROD_IS4_23"]'], script: [classpath: [], sandbox: true, script: 'return ["PROD_IS1_20", "PROD_IS2_21", "PROD_IS3_22", "PROD_IS4_23"]']]],
+
+        [
+            $class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            name: 'PACKAGES_TO_BUILD',
+            description: 'Select PROD packages to build and deploy',
+            filterable: true,
+            filterLength: 2,
+            script: [
+                $class: 'GroovyScript',
+                fallbackScript: [
+                    classpath: [],
+                    sandbox: true,
+                    script: 'return ["ERROR: Unable to load PROD packages"]'
+                ],
+                script: [
+                    classpath: [],
+                    sandbox: false,
+                    script: '''
+                        import groovy.json.JsonSlurper
+                        import java.net.HttpURLConnection
+                        import java.net.URLEncoder
+                        import java.util.Base64
+                        import jenkins.model.Jenkins
+                        import com.cloudbees.plugins.credentials.CredentialsProvider
+                        import com.cloudbees.plugins.credentials.common.StandardUsernamePasswordCredentials
+
+                        def credentialId = 'Admin_Bitbucket'
+
+                        def credential = CredentialsProvider.lookupCredentials(
+                            StandardUsernamePasswordCredentials,
+                            Jenkins.get(),
+                            null,
+                            null
+                        ).find { it.id == credentialId }
+
+                        if (!credential) {
+                            return ["ERROR: Credential '${credentialId}' not found"]
+                        }
+
+                        def authentication = Base64.encoder.encodeToString(
+                            "${credential.username}:${credential.password.plainText}".getBytes('UTF-8')
+                        )
+
+                        def encodedBranch = URLEncoder.encode(
+                            'refs/heads/PROD',
+                            'UTF-8'
+                        )
+
+                        def apiUrl =
+                            'https://bitbucket.tawn.com/rest/api/1.0/projects/EI/' +
+                            'repos/webmethods-source-code/browse/IS' +
+                            "?at=${encodedBranch}&limit=1000"
+
+                        HttpURLConnection connection =
+                            (HttpURLConnection) new URL(apiUrl).openConnection()
+
+                        connection.requestMethod = 'GET'
+                        connection.connectTimeout = 10000
+                        connection.readTimeout = 30000
+                        connection.setRequestProperty('Authorization', "Basic ${authentication}")
+                        connection.setRequestProperty('Accept', 'application/json')
+
+                        try {
+                            int responseCode = connection.responseCode
+
+                            if (responseCode != 200) {
+                                return ["ERROR: Bitbucket HTTP ${responseCode}"]
+                            }
+
+                            def response = new JsonSlurper().parse(connection.inputStream)
+
+                            def packages = response.children.values
+                                .findAll { it.type == 'DIRECTORY' }
+                                .collect { it.path.name.toString() }
+                                .findAll {
+                                    it != 'Default' &&
+                                    it != 'default' &&
+                                    !it.startsWith('Wm') &&
+                                    !it.startsWith('Wx')
+                                }
+                                .sort()
+
+                            return packages ?: ["ERROR: No PROD packages found"]
+                        } catch (Exception error) {
+                            return ["ERROR: ${error.class.simpleName}: ${error.message}"]
+                        } finally {
+                            connection.disconnect()
+                        }
+                    '''
+                ]
+            ]
+        ]
+    ])
+])
+
+def SELECTED_PACKAGES = []
+def SELECTED_TARGETS = []
+def SHARED_PROJECT_EXISTS = false
+
+pipeline {
+    agent { label 'HQV-SAG-DEPP01' }
+
+    options {
+        disableConcurrentBuilds()
+        lock(resource: 'webMethods-Deployer-shared')
+        buildDiscarder(logRotator(numToKeepStr: '3'))
+        timestamps()
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        ENVIRONMENT_NAME = 'PROD'
+        BRANCH_NAME = 'PROD'
+
+        SAG_HOME = '/sag/dbp1011'
+        JAVA_HOME = '/sag/dbp1011/jvm/jvm'
+
+        ABE_BUILD_FILE = "${SAG_HOME}/common/AssetBuildEnvironment/master_build/build.xml"
+        DEPLOYER_BIN = "${SAG_HOME}/IntegrationServer/instances/default/packages/WmDeployer/bin"
+        PROJECT_AUTOMATOR = "${DEPLOYER_BIN}/projectautomatorUnix.sh"
+        DEPLOYER_CMD = "${DEPLOYER_BIN}/Deployer.sh"
+
+        TEMP_SRC = "${WORKSPACE}/.tmp_build_src"
+        BUILD_OUTPUT_DIR = '/sag/jenkins/webmethods-deployer/build_output'
+        PROJECT_MANIFEST_DIR = '/sag/jenkins/webmethods-deployer/project-manifests'
+        GENERATED_DIR = "${WORKSPACE}/generated"
+        GENERATED_XML = "${WORKSPACE}/generated/Deployment_ProjectAutomator.xml"
+        BUILD_LOG_FILE = "${WORKSPACE}/generated/abe-build.log"
+
+        TEMPLATE_XML = '01-deployer/templates/ProjectAutomator.Repository.template.xml'
+
+        DEPLOYER_HOST = '127.0.0.1'
+        DEPLOYER_PORT = '5555'
+        DEPLOYER_HTTP_URL = 'http://127.0.0.1:5555/WmDeployer/define-repository.dsp'
+        REPO_ALIAS = 'BuildRepo'
+
+        EMAIL_RECIPIENTS = 'melarief@tawuniya.com'
+        EMAIL_SUBJECT = 'API PROD Deployment'
+        APPLICATION_NAME = 'webMethods API'
+
+        NEED_ROLLBACK = 'false'
+        ROLLBACK_REQUIRED = 'false'
+        DEPLOYMENT_FAILED = 'false'
+        DEPLOY_EXIT_CODE = '0'
+        ROLLBACK_STATUS = 'NOT_REQUIRED'
+    }
+
+    stages {
+        stage('Validate Input') {
+            steps {
+                script {
+                    if (!params.EPIC_NAME?.trim()) {
+                        error('EPIC_NAME is required')
+                    }
+
+                    if (!(params.EPIC_NAME.trim() ==~ /[A-Za-z0-9._-]+/)) {
+                        error('EPIC_NAME may contain only letters, numbers, dots, underscores and hyphens')
+                    }
+
+                    SELECTED_PACKAGES = getSelected(params.PACKAGES_TO_BUILD)
+                    SELECTED_TARGETS = getSelected(params.TARGET_SCOPE)
+
+                    if (SELECTED_PACKAGES.isEmpty()) {
+                        error('Select at least one package')
+                    }
+
+                    if (SELECTED_PACKAGES.any { it.startsWith('ERROR:') }) {
+                        error("Package discovery failed: ${SELECTED_PACKAGES.join(', ')}")
+                    }
+
+                    if (SELECTED_PACKAGES.any { !(it ==~ /[A-Za-z0-9._-]+/) }) {
+                        error('Package names may contain only letters, numbers, dots, underscores and hyphens')
+                    }
+
+                    if (SELECTED_TARGETS.isEmpty()) {
+                        error('Select at least one target server')
+                    }
+
+                    if (SELECTED_TARGETS.size() != 1) {
+                        error('Select exactly one target server alias')
+                    }
+
+                    echo "Environment: ${env.ENVIRONMENT_NAME}"
+                    echo "Branch: ${env.BRANCH_NAME}"
+                    echo "Jenkins agent: ${env.NODE_NAME}"
+                    echo "Packages: ${SELECTED_PACKAGES.join(', ')}"
+                    echo "Targets: ${SELECTED_TARGETS.join(', ')}"
+                }
+            }
+        }
+
+        stage('Set Build Name') {
+            steps {
+                script {
+                    currentBuild.displayName = "${params.EPIC_NAME}"
+                    currentBuild.description = "EPIC=${params.EPIC_NAME} | ENV=${env.ENVIRONMENT_NAME} | AGENT=${env.NODE_NAME}"
+                }
+            }
+        }
+
+        stage('Send Start Email') {
+            steps {
+                script {
+                    sendDeploymentEmail(
+                        'Started',
+                        '#2c3e50',
+                        "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has started as follows:",
+                        getSelected(params.TARGET_SCOPE).join(', ')
+                    )
+                }
+            }
+        }
+
+        stage('Checkout Repo') {
+            steps {
+                script {
+                    echo "Environment selected: ${env.ENVIRONMENT_NAME}"
+                    echo "Branch selected for checkout: ${env.BRANCH_NAME}"
+                    echo "Running on Jenkins agent: ${env.NODE_NAME}"
+
+                    deleteDir()
+
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${env.BRANCH_NAME}"]],
+                        userRemoteConfigs: [[
+                            url: 'https://bitbucket.tawn.com/scm/EI/webmethods-source-code.git',
+                            credentialsId: 'Admin_Bitbucket'
+                        ]],
+                        extensions: [
+                            [$class: 'CloneOption',
+                                shallow: true,
+                                depth: 1,
+                                noTags: true,
+                                honorRefspec: true,
+                                timeout: 30
+                            ]
+                        ]
+                    ])
+                }
+            }
+        }
+
+        stage('Validate Repo Content') {
+            steps {
+                script {
+                    if (!fileExists(env.TEMPLATE_XML)) {
+                        error("Template XML not found after checkout: ${env.TEMPLATE_XML}")
+                    }
+
+                    for (pkg in SELECTED_PACKAGES) {
+                        if (!fileExists("IS/${pkg}")) {
+                            error("Package not found in repo: IS/${pkg}")
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Validate Tools') {
+            steps {
+                script {
+                    def abeCommand = "${env.SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh"
+                    def javaCommand = "${env.JAVA_HOME}/bin/java"
+
+                    if (!fileExists(abeCommand)) {
+                        error("ABE build command not found: ${abeCommand}")
+                    }
+
+                    if (!fileExists(env.ABE_BUILD_FILE)) {
+                        error("ABE build file not found: ${env.ABE_BUILD_FILE}")
+                    }
+
+                    if (!fileExists(javaCommand)) {
+                        error("Java executable not found: ${javaCommand}")
+                    }
+
+                    if (!fileExists(env.PROJECT_AUTOMATOR)) {
+                        error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}")
+                    }
+
+                    if (!fileExists(env.DEPLOYER_CMD)) {
+                        error("Deployer command not found: ${env.DEPLOYER_CMD}")
+                    }
+                }
+            }
+        }
+
+        stage('Check Shared Deployer Project') {
+            steps {
+                script {
+                    SHARED_PROJECT_EXISTS = sharedDeployerProjectExists(
+                        params.EPIC_NAME.trim()
+                    )
+
+                    if (SHARED_PROJECT_EXISTS) {
+                        echo "Shared Deployer project already exists: ${params.EPIC_NAME}"
+                    } else {
+                        echo "Shared Deployer project will be created: ${params.EPIC_NAME}"
+                    }
+                }
+            }
+        }
+
+        stage('Prepare Build Source') {
+            steps {
+                sh '''
+                    echo "Cleaning previous build directories and status files..."
+
+                    rm -rf "${TEMP_SRC}" \
+                           "${BUILD_OUTPUT_DIR}" \
+                           "${GENERATED_DIR}"
+
+                    rm -f "${WORKSPACE}/build_output.zip" \
+                          "${WORKSPACE}/.deployment_failed" \
+                          "${WORKSPACE}/.rollback_status" \
+                          "${WORKSPACE}/.snapshot_created"
+
+                    mkdir -p "${TEMP_SRC}" \
+                             "${BUILD_OUTPUT_DIR}" \
+                             "${GENERATED_DIR}"
+                '''
+
+                script {
+                    for (pkg in SELECTED_PACKAGES) {
+                        sh """
+                            echo "Preparing package: ${pkg}"
+
+                            if [ ! -d "${env.WORKSPACE}/IS/${pkg}" ]; then
+                                echo "ERROR: Package directory is missing: IS/${pkg}"
+                                exit 1
+                            fi
+
+                            mkdir -p "${env.TEMP_SRC}/${pkg}"
+
+                            cp -R \
+                                "${env.WORKSPACE}/IS/${pkg}/." \
+                                "${env.TEMP_SRC}/${pkg}/"
+
+                            echo "Package prepared successfully: ${pkg}"
+                        """
+                    }
+                }
+
+                sh '''
+                    echo "Prepared build source:"
+
+                    find "${TEMP_SRC}" \
+                        -mindepth 1 \
+                        -maxdepth 1 \
+                        -type d \
+                        -printf '%f\n' | sort
+                '''
+            }
+        }
+
+        stage('ABE Build') {
+            steps {
+                sh '''
+                    set -o pipefail
+
+                    export PATH=$JAVA_HOME/bin:$PATH
+                    unset CLASSPATH
+
+                    export ANT_OPTS="-Xms2g -Xmx16g -XX:+UseG1GC"
+                    export JAVA_OPTS="-Xms2g -Xmx16g -XX:+UseG1GC"
+                    export _JAVA_OPTIONS="-Xms2g -Xmx16g -XX:+UseG1GC"
+
+                    "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" \
+                        -Dbuild.output.dir="${BUILD_OUTPUT_DIR}" \
+                        -Dbuild.source.dir="${TEMP_SRC}" \
+                        -Denable.checkout=false \
+                        -Denable.archive=false \
+                        -Denable.build.IS=true \
+                        2>&1 | tee "${BUILD_LOG_FILE}"
+                '''
+            }
+        }
+
+        stage('Validate ABE Output') {
+            steps {
+                sh '''
+                    echo "Checking ABE output..."
+                    find "${BUILD_OUTPUT_DIR}" -maxdepth 3 -type f | sort
+
+                    if [ ! -d "${BUILD_OUTPUT_DIR}/IS" ]; then
+                        echo "ERROR: ${BUILD_OUTPUT_DIR}/IS not found"
+                        exit 1
+                    fi
+
+                    if ! ls "${BUILD_OUTPUT_DIR}/IS"/*.acdl >/dev/null 2>&1; then
+                        echo "ERROR: No ACDL files generated"
+                        exit 1
+                    fi
+                '''
+            }
+        }
+
+        stage('Generate Project Automator XML') {
+            when {
+                expression {
+                    return !SHARED_PROJECT_EXISTS
+                }
+            }
+
+            steps {
+                script {
+                    generateProjectAutomatorXml(
+                        SELECTED_PACKAGES
+                    )
+                }
+            }
+        }
+
+        stage('Configure Shared Deployer Project') {
+            steps {
+                script {
+                    if (!SHARED_PROJECT_EXISTS) {
+                        createDeployerProject()
+                        createSharedPackageManifest(SELECTED_PACKAGES)
+                        createSharedTargetManifest()
+                    } else {
+                        validateSharedPackageManifest(SELECTED_PACKAGES)
+                        validateSharedTargetManifest(SELECTED_TARGETS)
+                        echo 'The requested packages match the shared EPIC package manifest. Deployment-set updates skipped to preserve existing checkpoints.'
+                    }
+                }
+            }
+        }
+
+        stage('Create Snapshot') {
+            steps {
+                script {
+                    createSnapshot()
+                }
+            }
+        }
+
+        stage('Deploy Candidate') {
+            steps {
+                script {
+                    int deployStatus = deployCandidate()
+
+                    if (deployStatus != 0) {
+                        writeFile(
+                            file: '.deployment_failed',
+                            text: deployStatus.toString()
+                        )
+
+                        echo "Deployment failed with exit code ${deployStatus}."
+                        echo 'Automatic rollback is required.'
+                    } else {
+                        echo 'Deployment completed successfully.'
+                    }
+                }
+            }
+        }
+
+        stage('Automatic Rollback') {
+            steps {
+                script {
+                    if (fileExists('.deployment_failed') && fileExists('.snapshot_created')) {
+                        echo 'Starting automatic rollback.'
+
+                        int rollbackExitCode = rollbackDeployment()
+                        String rollbackResult =
+                            rollbackExitCode == 0 ? 'SUCCESS' : 'FAILED'
+
+                        writeFile(
+                            file: '.rollback_status',
+                            text: rollbackResult
+                        )
+
+                        echo "Rollback status: ${rollbackResult}"
+                    } else if (!fileExists('.deployment_failed')) {
+                        echo 'Rollback skipped because deployment succeeded.'
+                    } else {
+                        writeFile(file: '.rollback_status', text: 'NOT_AVAILABLE')
+                        echo 'Rollback skipped because this build did not create a checkpoint.'
+                    }
+                }
+            }
+        }
+
+        stage('Retain Deployment Candidate') {
+            steps {
+                script {
+                    if (!fileExists('.deployment_failed')) {
+                        echo "Candidate retained: ${params.EPIC_NAME}_${env.ENVIRONMENT_NAME}"
+                    } else if (
+                        fileExists('.rollback_status') &&
+                        readFile('.rollback_status').trim() == 'SUCCESS'
+                    ) {
+                        echo 'Automatic rollback succeeded.'
+                        echo "Candidate retained for reuse: ${params.EPIC_NAME}_${env.ENVIRONMENT_NAME}"
+                        echo "Shared project retained: ${params.EPIC_NAME}"
+                    } else {
+                        echo 'Candidate retained for investigation.'
+                        echo "Candidate: ${params.EPIC_NAME}_${env.ENVIRONMENT_NAME}"
+                        echo "Project: ${params.EPIC_NAME}"
+                    }
+                }
+            }
+        }
+
+        stage('Zip Build Output') {
+            steps {
+                zipBuildOutput()
+            }
+        }
+
+        stage('Archive Artifacts') {
+            steps {
+                archiveArtifacts(
+                    artifacts: 'generated/*.log, generated/*.xml, build_output.zip',
+                    allowEmptyArchive: true
+                )
+            }
+        }
+
+        stage('Set Final Deployment Result') {
+            steps {
+                script {
+                    if (fileExists('.deployment_failed')) {
+                        def deployExitCode = readFile(
+                            file: '.deployment_failed'
+                        ).trim()
+
+                        def rollbackStatus = fileExists('.rollback_status')
+                            ? readFile(file: '.rollback_status').trim()
+                            : 'UNKNOWN'
+
+                        env.DEPLOYMENT_FAILED = 'true'
+                        env.ROLLBACK_REQUIRED = 'true'
+                        env.DEPLOY_EXIT_CODE = deployExitCode
+                        env.ROLLBACK_STATUS = rollbackStatus
+
+                        error(
+                            "Deployment failed with exit code ${deployExitCode}. " +
+                            "Rollback status: ${rollbackStatus}."
+                        )
+                    }
+
+                    echo 'Deployment and post-deployment steps completed successfully.'
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                sendDeploymentEmail(
+                    'Success',
+                    '#27ae60',
+                    "We are pleased to inform you that the deployment of ${env.APPLICATION_NAME} has been completed successfully as follows:",
+                    getSelected(params.TARGET_SCOPE).join(', ')
+                )
+            }
+        }
+
+        failure {
+            script {
+                sendDeploymentEmail(
+                    'Failed',
+                    '#c0392b',
+                    "Please be informed that the deployment of ${env.APPLICATION_NAME} has failed as follows:",
+                    getSelected(params.TARGET_SCOPE).join(', ')
+                )
+            }
+        }
+
+        always {
+            echo 'Pipeline execution finished.'
+        }
+    }
+}
+
+def sharedDeployerProjectExists(projectName) {
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'API_IS_Deployer',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        int status = sh(
+            script: """
+                set +x
+
+                chmod +x \"\${DEPLOYER_CMD}\" || true
+
+                \"\${DEPLOYER_CMD}\" --list \\
+                    -candidate project \\
+                    -host \"\${DEPLOYER_HOST}\" \\
+                    -port \"\${DEPLOYER_PORT}\" \\
+                    -user \"\${DEPLOYER_USER}\" \\
+                    -pwd \"\${DEPLOYER_PWD}\" \\
+                    2>&1 | grep -Fq \"${projectName}\"
+            """,
+            returnStatus: true
+        )
+
+        return status == 0
+    }
+}
+
+def generateProjectAutomatorXml(packages) {
+    def epic = params.EPIC_NAME.trim()
+    def createdAt = new Date().format('yyyy-MM-dd HH:mm')
+    def targets = getSharedTargetConfigs()
+    def xml = readFile(file: env.TEMPLATE_XML, encoding: 'UTF-8')
+    def deploymentEntries = buildRepositoryEntries(packages, env.REPO_ALIAS)
+
+    xml = xml.replace('@DEPLOYER_HOST_PORT@', "${env.DEPLOYER_HOST}:${env.DEPLOYER_PORT}")
+    xml = xml.replace('@PROJECT_NAME@', epic)
+    xml = xml.replace('@PROJECT_DESC@', "${createdAt} - Project created for EPIC ${epic}")
+    xml = xml.replace('@REPO_ALIAS@', env.REPO_ALIAS)
+    xml = xml.replace('@REPO_DIRECTORY@', env.BUILD_OUTPUT_DIR)
+    xml = xml.replace('@IS_ALIASES@', buildISAliases(targets))
+    xml = xml.replace('@QC_DEPLOYMENT_SET_NAME@', "${epic}_QC_DEPLOYMENT_SET")
+    xml = xml.replace('@QC_DEPLOYMENT_MAP_NAME@', "${epic}_QC_DEPLOYMENT_MAP")
+    xml = xml.replace('@QC_CANDIDATE_NAME@', "${epic}_QC")
+    xml = xml.replace('@QC_DEPLOYMENT_ENTRIES@', deploymentEntries)
+    xml = xml.replace('@QC_TARGET_ALIAS@', 'QC_IS_181')
+    xml = xml.replace('@UAT_DEPLOYMENT_SET_NAME@', "${epic}_UAT_DEPLOYMENT_SET")
+    xml = xml.replace('@UAT_DEPLOYMENT_MAP_NAME@', "${epic}_UAT_DEPLOYMENT_MAP")
+    xml = xml.replace('@UAT_CANDIDATE_NAME@', "${epic}_UAT")
+    xml = xml.replace('@UAT_DEPLOYMENT_ENTRIES@', deploymentEntries)
+    xml = xml.replace('@UAT_TARGET_ALIAS@', 'UAT_IS_27')
+    xml = xml.replace('@PROD_DEPLOYMENT_SET_NAME@', "${epic}_PROD_DEPLOYMENT_SET")
+    xml = xml.replace('@PROD_DEPLOYMENT_MAP_NAME@', "${epic}_PROD_DEPLOYMENT_MAP")
+    xml = xml.replace('@PROD_CANDIDATE_NAME@', "${epic}_PROD")
+    xml = xml.replace('@PROD_DEPLOYMENT_ENTRIES@', deploymentEntries)
+    xml = xml.replace('@PROD_TARGET_ALIAS@', initialProdTargetAlias())
+
+    writeFile(
+        file: env.GENERATED_XML,
+        text: xml,
+        encoding: 'UTF-8'
+    )
+
+    echo "Generated XML: ${env.GENERATED_XML}"
+    echo 'XML generated successfully. Content hidden to avoid exposing credentials.'
+}
+
+def createDeployerProject() {
+    if (!fileExists(env.GENERATED_XML)) {
+        error("Generated Project Automator XML not found: ${env.GENERATED_XML}")
+    }
+
+    if (!fileExists(env.PROJECT_AUTOMATOR)) {
+        error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}")
+    }
+
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'API_IS_Deployer',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        ),
+        usernamePassword(
+            credentialsId: 'API_IS_Target',
+            usernameVariable: 'IS_USER',
+            passwordVariable: 'IS_PWD'
+        )
+    ]) {
+        sh '''
+                sed -i "s|\\${DEPLOYER_USER}|${DEPLOYER_USER}|g" "${GENERATED_XML}"
+                sed -i "s|\\${DEPLOYER_PWD}|${DEPLOYER_PWD}|g" "${GENERATED_XML}"
+                sed -i "s|\\${IS_USER}|${IS_USER}|g" "${GENERATED_XML}"
+                sed -i "s|\\${IS_PWD}|${IS_PWD}|g" "${GENERATED_XML}"
+
+                chmod +x "${PROJECT_AUTOMATOR}" || true
+                "${PROJECT_AUTOMATOR}" "${GENERATED_XML}"
+        '''
+    }
+}
+
+def sharedPackageManifestPath() {
+    return "${env.PROJECT_MANIFEST_DIR}/${params.EPIC_NAME.trim()}.packages"
+}
+
+def canonicalPackageList(packages) {
+    return packages.collect { it.trim() }.findAll { it }.unique().sort()
+}
+
+def createSharedPackageManifest(packages) {
+    def packageList = canonicalPackageList(packages)
+    def manifestPath = sharedPackageManifestPath()
+
+    sh "mkdir -p '${env.PROJECT_MANIFEST_DIR}'"
+    writeFile(
+        file: manifestPath,
+        text: packageList.join('\n') + '\n',
+        encoding: 'UTF-8'
+    )
+
+    echo "Created shared package manifest for ${params.EPIC_NAME}: ${packageList.join(', ')}"
+}
+
+def validateSharedPackageManifest(packages) {
+    def manifestPath = sharedPackageManifestPath()
+
+    if (!fileExists(manifestPath)) {
+        echo "WARNING: Existing project ${params.EPIC_NAME} has no shared package manifest."
+        echo 'Initializing its manifest once from the package list selected for this build.'
+        createSharedPackageManifest(packages)
+        echo 'Legacy project manifest initialized. Deployment-set updates remain skipped to preserve existing checkpoints.'
+        return
+    }
+
+    def expectedPackages = readFile(manifestPath)
+        .readLines()
+        .collect { it.trim() }
+        .findAll { it }
+        .unique()
+        .sort()
+    def requestedPackages = canonicalPackageList(packages)
+
+    if (requestedPackages != expectedPackages) {
+        error(
+            "Package selection does not match the shared project ${params.EPIC_NAME}. " +
+            "Expected: ${expectedPackages.join(', ')}. " +
+            "Requested: ${requestedPackages.join(', ')}. " +
+            'Use the same package list for QC and UAT. For a different list, create a new EPIC project.'
+        )
+    }
+}
+
+def sharedTargetManifestPath() {
+    return "${env.PROJECT_MANIFEST_DIR}/${params.EPIC_NAME.trim()}.targets"
+}
+
+def configuredTargetAliases() {
+    [
+        QC: 'QC_IS_181',
+        UAT: 'UAT_IS_27',
+        PROD: initialProdTargetAlias()
+    ]
+}
+
+def createSharedTargetManifest() {
+    def targetAliases = configuredTargetAliases()
+    def manifestPath = sharedTargetManifestPath()
+
+    writeFile(
+        file: manifestPath,
+        text: ['QC', 'UAT', 'PROD']
+            .collect { environmentName ->
+                "${environmentName}=${targetAliases[environmentName]}"
+            }
+            .join('\n') + '\n',
+        encoding: 'UTF-8'
+    )
+
+    echo "Created shared target manifest: ${targetAliases}"
+}
+
+def validateSharedTargetManifest(selectedTargets) {
+    def manifestPath = sharedTargetManifestPath()
+
+    if (!fileExists(manifestPath)) {
+        echo "WARNING: Existing project ${params.EPIC_NAME} has no shared target manifest."
+        echo 'Initializing its target manifest from the aliases currently defined by this pipeline.'
+        createSharedTargetManifest()
+        return
+    }
+
+    def targetAliases = [:]
+    readFile(manifestPath).readLines().each { line ->
+        def parts = line.split('=', 2)
+        if (parts.size() == 2) {
+            targetAliases[parts[0].trim()] = parts[1].trim()
+        }
+    }
+
+    def selectedAlias = getTargetConfigs(selectedTargets).first().alias
+    def configuredAlias = targetAliases[env.ENVIRONMENT_NAME]
+
+    if (!configuredAlias) {
+        error("No target alias is recorded for ${env.ENVIRONMENT_NAME} in ${manifestPath}.")
+    }
+
+    if (selectedAlias != configuredAlias) {
+        error(
+            "Shared project ${params.EPIC_NAME} is configured for ${env.ENVIRONMENT_NAME} " +
+            "target alias ${configuredAlias}, but ${selectedAlias} was selected. " +
+            'Changing a deployment-map target can invalidate its checkpoint. ' +
+            "Select ${configuredAlias}, or use a new EPIC project for a different target alias."
+        )
+    }
+}
+
+def deploymentSetRequiresUpdate(packages, environmentName) {
+    def epic = params.EPIC_NAME.trim()
+    def deploymentSetName = "${epic}_${environmentName}_DEPLOYMENT_SET"
+    def pageFile = "${env.GENERATED_DIR}/${environmentName}-current-deployment-set.html"
+    def currentFile = "${env.GENERATED_DIR}/${environmentName}-current-deployment-set-fields.txt"
+    def expectedFile = "${env.GENERATED_DIR}/${environmentName}-expected-deployment-set-fields.txt"
+    def expectedFields = packages.collect { pkg ->
+        "${env.REPO_ALIAS}\$IS\$${pkg}\$${pkg}\$COMPOSITE_INCL"
+    }.sort()
+
+    writeFile(
+        file: expectedFile,
+        text: expectedFields.join('\n') + '\n',
+        encoding: 'UTF-8'
+    )
+
+    int comparisonStatus
+
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'API_IS_Deployer',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        comparisonStatus = sh(
+            script: """
+                set +x
+
+                curl --noproxy '*' \\
+                    --silent \\
+                    --show-error \\
+                    --fail \\
+                    --connect-timeout 5 \\
+                    --max-time 120 \\
+                    --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" \\
+                    --get \\
+                    --data-urlencode 'projectName=${epic}' \\
+                    --data-urlencode 'bundleName=${deploymentSetName}' \\
+                    "\${DEPLOYER_HTTP_URL}" \\
+                    --output '${pageFile}' || exit 20
+
+                python3 - '${pageFile}' '${currentFile}' <<'PY'
+from html.parser import HTMLParser
+import sys
+
+class CheckedCompositeParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.names = set()
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != 'input':
+            return
+        values = {key.lower(): value for key, value in attrs}
+        name = values.get('name')
+        if 'checked' in values and name and name.endswith(chr(36) + 'COMPOSITE_INCL'):
+            self.names.add(name)
+
+parser = CheckedCompositeParser()
+with open(sys.argv[1], encoding='utf-8', errors='replace') as source:
+    parser.feed(source.read())
+
+with open(sys.argv[2], 'w', encoding='utf-8') as output:
+    for name in sorted(parser.names):
+        output.write(name + chr(10))
+PY
+
+                if cmp -s '${expectedFile}' '${currentFile}'; then
+                    exit 0
+                fi
+
+                echo 'Current deployment-set composites:'
+                sed 's/^/  /' '${currentFile}'
+                echo 'Requested deployment-set composites:'
+                sed 's/^/  /' '${expectedFile}'
+                exit 10
+            """,
+            returnStatus: true
+        )
+    }
+
+    if (comparisonStatus == 0) {
+        return false
+    }
+
+    if (comparisonStatus == 10) {
+        return true
+    }
+
+    error("Unable to inspect deployment set ${deploymentSetName}; comparison exited with code ${comparisonStatus}.")
+}
+
+def updateDeploymentSet(packages, environmentName) {
+    def packageChecks = packages.collect { pkg ->
+        def fieldName = "${env.REPO_ALIAS}\$IS\$${pkg}\$${pkg}\$COMPOSITE_INCL"
+        "grep -Fq '${fieldName}' \"\${GENERATED_DIR}/available-composites.html\""
+    }.join('\n            ')
+    def epic = params.EPIC_NAME.trim()
+    def deploymentSetName = "${epic}_${environmentName}_DEPLOYMENT_SET"
+    def packageArguments = packages.collect { pkg ->
+        def fieldName = "${env.REPO_ALIAS}\$IS\$${pkg}\$${pkg}\$COMPOSITE_INCL"
+        "--data-urlencode '${fieldName}=COMPOSITE_INCL'"
+    }.join(' \\\n                    ')
+
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'API_IS_Deployer',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        sh """
+            set +x
+
+            curl --noproxy '*' \\
+                --silent \\
+                --show-error \\
+                --fail \\
+                --connect-timeout 5 \\
+                --max-time 120 \\
+                --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" \\
+                --get \\
+                --data-urlencode 'projectName=${epic}' \\
+                --data-urlencode 'bundleName=${deploymentSetName}' \\
+                "\${DEPLOYER_HTTP_URL}" \\
+                --output "\${GENERATED_DIR}/available-composites.html"
+
+            ${packageChecks}
+
+            curl --noproxy '*' \\
+                --silent \\
+                --show-error \\
+                --fail \\
+                --connect-timeout 5 \\
+                --max-time 120 \\
+                --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" \\
+                --request POST \\
+                --data-urlencode 'projectName=${epic}' \\
+                --data-urlencode 'bundleName=${deploymentSetName}' \\
+                --data-urlencode 'action=updateDeveloper' \\
+                --data-urlencode 'regExp=' \\
+                --data-urlencode 'regExp2=' \\
+                ${packageArguments} \\
+                "\${DEPLOYER_HTTP_URL}" \\
+                --output "\${GENERATED_DIR}/update-deployment-set.html"
+
+            grep -Fq \\
+                'Successfully updated Composites in deployment set ${deploymentSetName}.' \\
+                "\${GENERATED_DIR}/update-deployment-set.html"
+        """
+    }
+}
+
+def createSnapshot() {
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'API_IS_Deployer',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        def snapshotStatus = sh(
+            script: '''
+                set +x
+                set -o pipefail
+                chmod +x "${DEPLOYER_CMD}" || true
+
+                "${DEPLOYER_CMD}" --checkpoint \
+                    -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" \
+                    -project "${EPIC_NAME}" \
+                    -host "${DEPLOYER_HOST}" \
+                    -port "${DEPLOYER_PORT}" \
+                    -user "${DEPLOYER_USER}" \
+                    -pwd "${DEPLOYER_PWD}" \
+                    -reportFilePath "${GENERATED_DIR}/checkpoint-report.xml" \
+                    2>&1 | tee "${GENERATED_DIR}/checkpoint.log"
+            ''',
+            returnStatus: true
+        )
+
+        if (snapshotStatus != 0) {
+            String checkpointLog = fileExists("${env.GENERATED_DIR}/checkpoint.log")
+                ? readFile("${env.GENERATED_DIR}/checkpoint.log")
+                : ''
+
+            if (checkpointLog.contains('[DEP.0002.0148]')) {
+                error(
+                    "Deployment cannot continue: candidate " +
+                    "${params.EPIC_NAME}_${env.ENVIRONMENT_NAME} does not exist. " +
+                    'Recreate the environment map and candidate first.'
+                )
+            }
+
+            error("Snapshot creation failed with exit code ${snapshotStatus}. Deployment cannot continue.")
+        }
+
+        writeFile(file: '.snapshot_created', text: 'true')
+        echo 'Snapshot created successfully.'
+    }
+}
+
+def deployCandidate() {
+    int deployStatus
+
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'API_IS_Deployer',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        deployStatus = sh(
+            script: '''
+                chmod +x "${DEPLOYER_CMD}" || true
+
+                "${DEPLOYER_CMD}" --deploy \
+                    -project "${EPIC_NAME}" \
+                    -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" \
+                    -host "${DEPLOYER_HOST}" \
+                    -port "${DEPLOYER_PORT}" \
+                    -user "${DEPLOYER_USER}" \
+                    -pwd "${DEPLOYER_PWD}" \
+                    -force
+            ''',
+            returnStatus: true
+        )
+    }
+
+    if (deployStatus != 0) {
+        echo "Deployment failed with exit code ${deployStatus}."
+    } else {
+        echo 'Deployment succeeded.'
+    }
+
+    return deployStatus
+}
+
+def rollbackDeployment() {
+    int rollbackStatus
+
+    withCredentials([
+        usernamePassword(
+            credentialsId: 'API_IS_Deployer',
+            usernameVariable: 'DEPLOYER_USER',
+            passwordVariable: 'DEPLOYER_PWD'
+        )
+    ]) {
+        rollbackStatus = sh(
+            script: '''
+                echo "Automatic rollback started for project: ${EPIC_NAME}"
+
+                chmod +x "${DEPLOYER_CMD}" || true
+
+                "${DEPLOYER_CMD}" --rollback \
+                    -project "${EPIC_NAME}" \
+                    -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" \
+                    -host "${DEPLOYER_HOST}" \
+                    -port "${DEPLOYER_PORT}" \
+                    -user "${DEPLOYER_USER}" \
+                    -pwd "${DEPLOYER_PWD}"
+            ''',
+            returnStatus: true
+        )
+    }
+
+    if (rollbackStatus == 0) {
+        echo 'Automatic rollback completed successfully.'
+    } else {
+        echo "Automatic rollback failed with exit code ${rollbackStatus}."
+    }
+
+    return rollbackStatus
+}
+
+def zipBuildOutput() {
+    sh '''
+        rm -f "${WORKSPACE}/build_output.zip"
+
+        if [ -d "${BUILD_OUTPUT_DIR}" ]; then
+            cd "$(dirname "${BUILD_OUTPUT_DIR}")"
+            zip -r "${WORKSPACE}/build_output.zip" "$(basename "${BUILD_OUTPUT_DIR}")"
+        else
+            echo "${BUILD_OUTPUT_DIR} directory not found. Skipping zip."
+        fi
+    '''
+}
+
+def sendDeploymentEmail(status, color, message, targetServers) {
+    boolean isStarted = status == 'Started'
+    boolean deployFailed = !isStarted && fileExists('.deployment_failed')
+
+    String exitCode = deployFailed
+        ? readFile(file: '.deployment_failed').trim()
+        : '0'
+
+    String rollbackStatus = !isStarted && fileExists('.rollback_status')
+        ? readFile(file: '.rollback_status').trim()
+        : 'NOT_REQUIRED'
+
+    String resultDetails = isStarted ? '' : """
+        <p><strong>Rollback Required:</strong> ${deployFailed}</p>
+        <p><strong>Rollback Status:</strong> ${rollbackStatus}</p>
+    """
+
+    emailext(
+        to: env.EMAIL_RECIPIENTS,
+        subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status} - ${new Date().format('yyyy-MM-dd HH:mm')}",
+        recipientProviders: [[$class: 'DevelopersRecipientProvider']],
+        mimeType: 'text/html',
+        body: """\
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #34495e; }
+                    .container { width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; }
+                    h2 { color: #2c3e50; margin-top: 0; }
+                    .details { padding: 10px; border: 1px solid #e0e0e0; border-radius: 6px; }
+                    .details p { margin: 6px 0; }
+                    .status { color: ${color}; font-weight: bold; }
+                    .btn { display: inline-block; margin-top: 15px; padding: 8px 12px; color: #3498db; text-decoration: none; border: 1px solid #3498db; border-radius: 5px; }
+                    .footer { margin-top: 20px; font-size: 12px; color: #7f8c8d; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h2>TAWUNIYA - Deployment ${status}</h2>
+                    <p>Dears,</p>
+                    <p>${message}</p>
+
+                    <div class="details">
+                        <p><strong>Application:</strong> ${env.APPLICATION_NAME}</p>
+                        <p><strong>Environment:</strong> ${env.ENVIRONMENT_NAME}</p>
+                        <p><strong>Jenkins Agent:</strong> ${env.NODE_NAME}</p>
+                        <p><strong>Target Servers:</strong> ${targetServers ?: 'N/A'}</p>
+                        <p><strong>EPIC:</strong> <a href="https://sd.tawn.com/browse/${params.EPIC_NAME}">${params.EPIC_NAME}</a></p>
+                        <p><strong>Packages:</strong> ${getSelected(params.PACKAGES_TO_BUILD).join(', ')}</p>
+                        ${resultDetails}
+                        <p><strong>Status:</strong> <span class="status">${status}</span></p>
+                        <p><strong>Deployment Date-Time:</strong> ${new Date().format('yyyy-MM-dd HH:mm:ss')}</p>
+                    </div>
+
+                    <a class="btn" href="${env.BUILD_URL}">View Jenkins Build</a>
+
+                    <div class="footer">
+                        <p>Thank you for your cooperation.</p>
+                        <p><strong>Best regards,</strong><br>The DevOps Team</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        """
+    )
+}
+
+def getSelected(val) {
+    val?.trim() ? val.split(',').collect { it.trim() }.findAll { it && it != 'None' } : []
+}
+
+def buildNames(epic) {
+    def e = epic.trim()
+    def environmentName = env.ENVIRONMENT_NAME.trim()
+    def createdAt = new Date().format('yyyy-MM-dd HH:mm')
+
+    [
+        PROJECT_NAME: e,
+        PROJECT_DESC: "${createdAt} - Project created for EPIC ${e}",
+        DEPLOYMENT_SET_NAME: "${e}_${environmentName}_DEPLOYMENT_SET",
+        DEPLOYMENT_MAP_NAME: "${e}_${environmentName}_DEPLOYMENT_MAP",
+        CANDIDATE_NAME: "${e}_${environmentName}"
+    ]
+}
+
+def buildRepositoryEntries(packages, repositoryAlias) {
+    packages.collect {
+        """<Composite name="${it}" srcAlias="${repositoryAlias}" type="IS"/>"""
+    }.join('\n')
+}
+
+def buildISAliases(targets) {
+    targets.collect { target ->
+        """            <isalias name="${target.alias}">
+                <host>${target.host}</host>
+                <port>${target.port}</port>
+                <user>\${IS_USER}</user>
+                <pwd>\${IS_PWD}</pwd>
+                <useSSL>false</useSSL>
+                <installDeployerResource>false</installDeployerResource>
+                <Test>false</Test>
+            </isalias>"""
+    }.join('\n')
+}
+
+def getTargetConfigs(serverNames) {
+    def targetConfigMap = [
+        'PROD_IS1_20': [alias: 'PROD_IS1_20', host: '10.24.49.20', port: '5555'],
+        'PROD_IS2_21': [alias: 'PROD_IS2_21', host: '10.24.49.21', port: '5555'],
+        'PROD_IS3_22': [alias: 'PROD_IS3_22', host: '10.24.49.22', port: '5555'],
+        'PROD_IS4_23': [alias: 'PROD_IS4_23', host: '10.24.49.23', port: '5555']
+    ]
+
+    serverNames.each { targetName ->
+        if (!targetConfigMap[targetName]) {
+            error("No target configuration found for ${targetName}")
+        }
+    }
+
+    serverNames.collect {
+        targetConfigMap[it]
+    }
+}
+
+def getSharedTargetConfigs() {
+    [
+        [alias: 'QC_IS_181', host: '10.24.7.181', port: '5555'],
+        [alias: 'UAT_IS_27', host: '10.24.7.27', port: '5555'],
+        [alias: 'PROD_IS1_20', host: '10.24.49.20', port: '5555'],
+        [alias: 'PROD_IS2_21', host: '10.24.49.21', port: '5555'],
+        [alias: 'PROD_IS3_22', host: '10.24.49.22', port: '5555'],
+        [alias: 'PROD_IS4_23', host: '10.24.49.23', port: '5555']
+    ]
+}
+
+def initialProdTargetAlias() {
+    if (env.ENVIRONMENT_NAME == 'PROD') {
+        return getTargetConfigs(SELECTED_TARGETS).first().alias
+    }
+
+    return 'PROD_IS1_20'
+}
