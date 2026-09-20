@@ -1,7 +1,6 @@
 properties([
     parameters([
         string(name: 'EPIC_NAME', defaultValue: '', description: 'Use a Valid Jira Epic Number'),
-
         [$class: 'ChoiceParameter', choiceType: 'PT_CHECKBOX', name: 'TARGET_SCOPE', description: 'Select UAT POC target servers', filterable: true, filterLength: 2, script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return ["UAT"]'], script: [classpath: [], sandbox: true, script: 'return ["UAT"]']]],
 
         [
@@ -607,13 +606,14 @@ def sharedDeployerProjectExists(projectName) {
 
 def generateProjectAutomatorXml(packages) {
     def epic = params.EPIC_NAME.trim()
+    def createdAt = new Date().format('yyyy-MM-dd HH:mm')
     def targets = getSharedTargetConfigs()
     def xml = readFile(file: env.TEMPLATE_XML, encoding: 'UTF-8')
     def deploymentEntries = buildRepositoryEntries(packages, env.REPO_ALIAS)
 
     xml = xml.replace('@DEPLOYER_HOST_PORT@', "${env.DEPLOYER_HOST}:${env.DEPLOYER_PORT}")
     xml = xml.replace('@PROJECT_NAME@', epic)
-    xml = xml.replace('@PROJECT_DESC@', "Project created for EPIC ${epic}")
+    xml = xml.replace('@PROJECT_DESC@', "${createdAt} - Project created for EPIC ${epic}")
     xml = xml.replace('@REPO_ALIAS@', env.REPO_ALIAS)
     xml = xml.replace('@REPO_DIRECTORY@', env.BUILD_OUTPUT_DIR)
     xml = xml.replace('@IS_ALIASES@', buildISAliases(targets))
@@ -1027,7 +1027,7 @@ def sendDeploymentEmail(status, color, message, targetServers) {
 
     emailext(
         to: env.EMAIL_RECIPIENTS,
-        subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status} - ${new Date().format('yyyy-MM-dd HH:mm:ss')}",
+        subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status} - ${new Date().format('yyyy-MM-dd HH:mm')}",
         recipientProviders: [[$class: 'DevelopersRecipientProvider']],
         mimeType: 'text/html',
         body: """\
@@ -1085,10 +1085,11 @@ def getSelected(val) {
 def buildNames(epic) {
     def e = epic.trim()
     def environmentName = env.ENVIRONMENT_NAME.trim()
+    def createdAt = new Date().format('yyyy-MM-dd HH:mm')
 
     [
         PROJECT_NAME: e,
-        PROJECT_DESC: "Project created for EPIC ${e}",
+        PROJECT_DESC: "${createdAt} - Project created for EPIC ${e}",
         DEPLOYMENT_SET_NAME: "${e}_${environmentName}_DEPLOYMENT_SET",
         DEPLOYMENT_MAP_NAME: "${e}_${environmentName}_DEPLOYMENT_MAP",
         CANDIDATE_NAME: "${e}_${environmentName}"

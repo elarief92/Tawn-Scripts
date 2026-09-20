@@ -160,7 +160,7 @@ def executeRollback() {
 def sendRollbackEmail(status, color, message) {
     emailext(
         to: env.EMAIL_RECIPIENTS,
-        subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status}",
+        subject: "${env.EMAIL_SUBJECT} ${params.EPIC_NAME} - ${status} - ${new Date().format('yyyy-MM-dd HH:mm')}",
         recipientProviders: [[$class: 'DevelopersRecipientProvider']],
         mimeType: 'text/html',
         body: """\
