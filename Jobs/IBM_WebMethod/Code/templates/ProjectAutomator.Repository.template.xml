@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DeployerSpec exitOnError="true" sourceType="Repository">
+    <DeployerServer>
+        <host>@DEPLOYER_HOST_PORT@</host>
+        <user>${DEPLOYER_USER}</user>
+        <pwd>${DEPLOYER_PWD}</pwd>
+    </DeployerServer>
+
+    <Environment>
+        <IS>
+@IS_ALIASES@
+        </IS>
+
+        <Repository>
+            <repalias name="@REPO_ALIAS@">
+                <type>FlatFile</type>
+                <urlOrDirectory>@REPO_DIRECTORY@</urlOrDirectory>
+                <Test>true</Test>
+            </repalias>
+        </Repository>
+    </Environment>
+
+    <Projects projectPrefix="">
+        <Project description="@PROJECT_DESC@" ignoreMissingDependencies="true" name="@PROJECT_NAME@" overwrite="false" type="Repository">
+
+            <DeploymentSet autoResolve="full" description="" name="@QC_DEPLOYMENT_SET_NAME@" srcAlias="@REPO_ALIAS@">
+@QC_DEPLOYMENT_ENTRIES@
+            </DeploymentSet>
+
+            <DeploymentMap description="" name="@QC_DEPLOYMENT_MAP_NAME@"/>
+
+            <MapSetMapping mapName="@QC_DEPLOYMENT_MAP_NAME@" setName="@QC_DEPLOYMENT_SET_NAME@">
+                <alias type="IS">@QC_TARGET_ALIAS@</alias>
+            </MapSetMapping>
+
+            <DeploymentCandidate description="" mapName="@QC_DEPLOYMENT_MAP_NAME@" name="@QC_CANDIDATE_NAME@"/>
+
+            <DeploymentSet autoResolve="full" description="" name="@UAT_DEPLOYMENT_SET_NAME@" srcAlias="@REPO_ALIAS@">
+@UAT_DEPLOYMENT_ENTRIES@
+            </DeploymentSet>
+
+            <DeploymentMap description="" name="@UAT_DEPLOYMENT_MAP_NAME@"/>
+
+            <MapSetMapping mapName="@UAT_DEPLOYMENT_MAP_NAME@" setName="@UAT_DEPLOYMENT_SET_NAME@">
+                <alias type="IS">@UAT_TARGET_ALIAS@</alias>
+            </MapSetMapping>
+
+            <DeploymentCandidate description="" mapName="@UAT_DEPLOYMENT_MAP_NAME@" name="@UAT_CANDIDATE_NAME@"/>
+
+            <DeploymentSet autoResolve="full" description="" name="@PROD_DEPLOYMENT_SET_NAME@" srcAlias="@REPO_ALIAS@">
+@PROD_DEPLOYMENT_ENTRIES@
+            </DeploymentSet>
+
+            <DeploymentMap description="" name="@PROD_DEPLOYMENT_MAP_NAME@"/>
+
+            <MapSetMapping mapName="@PROD_DEPLOYMENT_MAP_NAME@" setName="@PROD_DEPLOYMENT_SET_NAME@">
+                <alias type="IS">@PROD_TARGET_ALIAS@</alias>
+            </MapSetMapping>
+
+            <DeploymentCandidate description="" mapName="@PROD_DEPLOYMENT_MAP_NAME@" name="@PROD_CANDIDATE_NAME@"/>
+
+        </Project>
+    </Projects>
+</DeployerSpec>
