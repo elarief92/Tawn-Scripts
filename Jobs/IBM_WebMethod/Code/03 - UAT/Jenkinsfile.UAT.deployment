@@ -31,33 +31,17 @@ properties([
 
                         def credentialId = 'Admin_Bitbucket'
 
-                        def credential = CredentialsProvider.lookupCredentials(
-                            StandardUsernamePasswordCredentials,
-                            Jenkins.get(),
-                            null,
-                            null
-                        ).find { it.id == credentialId }
+                        def credential = CredentialsProvider.lookupCredentials(StandardUsernamePasswordCredentials, Jenkins.get(), null, null).find { it.id == credentialId }
 
-                        if (!credential) {
-                            return ["ERROR: Credential '${credentialId}' not found"]
-                        }
+                        if (!credential) { return ["ERROR: Credential '${credentialId}' not found"] }
 
-                        def authentication = Base64.encoder.encodeToString(
-                            "${credential.username}:${credential.password.plainText}".getBytes('UTF-8')
-                        )
+                        def authentication = Base64.encoder.encodeToString("${credential.username}:${credential.password.plainText}".getBytes('UTF-8'))
 
-                        def encodedBranch = URLEncoder.encode(
-                            'refs/heads/UAT',
-                            'UTF-8'
-                        )
+                        def encodedBranch = URLEncoder.encode('refs/heads/UAT', 'UTF-8')
 
-                        def apiUrl =
-                            'https://bitbucket.tawn.com/rest/api/1.0/projects/EI/' +
-                            'repos/webmethods-source-code/browse/IS' +
-                            "?at=${encodedBranch}&limit=1000"
+                        def apiUrl = 'https://bitbucket.tawn.com/rest/api/1.0/projects/EI/' + 'repos/webmethods-source-code/browse/IS' + "?at=${encodedBranch}&limit=1000"
 
-                        HttpURLConnection connection =
-                            (HttpURLConnection) new URL(apiUrl).openConnection()
+                        HttpURLConnection connection = (HttpURLConnection) new URL(apiUrl).openConnection()
 
                         connection.requestMethod = 'GET'
                         connection.connectTimeout = 10000
@@ -68,22 +52,11 @@ properties([
                         try {
                             int responseCode = connection.responseCode
 
-                            if (responseCode != 200) {
-                                return ["ERROR: Bitbucket HTTP ${responseCode}"]
-                            }
+                            if (responseCode != 200) { return ["ERROR: Bitbucket HTTP ${responseCode}"] }
 
                             def response = new JsonSlurper().parse(connection.inputStream)
 
-                            def packages = response.children.values
-                                .findAll { it.type == 'DIRECTORY' }
-                                .collect { it.path.name.toString() }
-                                .findAll {
-                                    it != 'Default' &&
-                                    it != 'default' &&
-                                    !it.startsWith('Wm') &&
-                                    !it.startsWith('Wx')
-                                }
-                                .sort()
+                            def packages = response.children.values.findAll { it.type == 'DIRECTORY' }.collect { it.path.name.toString() }.findAll { it != 'Default' && it != 'default' && !it.startsWith('Wm') && !it.startsWith('Wx') }.sort()
 
                             return packages ?: ["ERROR: No UAT packages found"]
                         } catch (Exception error) {
@@ -154,36 +127,22 @@ pipeline {
         stage('Validate Input') {
             steps {
                 script {
-                    if (!params.EPIC_NAME?.trim()) {
-                        error('EPIC_NAME is required')
-                    }
+                    if (!params.EPIC_NAME?.trim()) { error('EPIC_NAME is required') }
 
-                    if (!(params.EPIC_NAME.trim() ==~ /[A-Za-z0-9._-]+/)) {
-                        error('EPIC_NAME may contain only letters, numbers, dots, underscores and hyphens')
-                    }
+                    if (!(params.EPIC_NAME.trim() ==~ /[A-Za-z0-9._-]+/)) { error('EPIC_NAME may contain only letters, numbers, dots, underscores and hyphens') }
 
                     SELECTED_PACKAGES = getSelected(params.PACKAGES_TO_BUILD)
                     SELECTED_TARGETS = getSelected(params.TARGET_SCOPE)
 
-                    if (SELECTED_PACKAGES.isEmpty()) {
-                        error('Select at least one package')
-                    }
+                    if (SELECTED_PACKAGES.isEmpty()) { error('Select at least one package') }
 
-                    if (SELECTED_PACKAGES.any { it.startsWith('ERROR:') }) {
-                        error("Package discovery failed: ${SELECTED_PACKAGES.join(', ')}")
-                    }
+                    if (SELECTED_PACKAGES.any { it.startsWith('ERROR:') }) { error("Package discovery failed: ${SELECTED_PACKAGES.join(', ')}") }
 
-                    if (SELECTED_PACKAGES.any { !(it ==~ /[A-Za-z0-9._-]+/) }) {
-                        error('Package names may contain only letters, numbers, dots, underscores and hyphens')
-                    }
+                    if (SELECTED_PACKAGES.any { !(it ==~ /[A-Za-z0-9._-]+/) }) { error('Package names may contain only letters, numbers, dots, underscores and hyphens') }
 
-                    if (SELECTED_TARGETS.isEmpty()) {
-                        error('Select at least one target server')
-                    }
+                    if (SELECTED_TARGETS.isEmpty()) { error('Select at least one target server') }
 
-                    if (SELECTED_TARGETS.size() != 1) {
-                        error('Select exactly one target server alias')
-                    }
+                    if (SELECTED_TARGETS.size() != 1) { error('Select exactly one target server alias') }
 
                     echo "Environment: ${env.ENVIRONMENT_NAME}"
                     echo "Branch: ${env.BRANCH_NAME}"
@@ -233,13 +192,7 @@ pipeline {
                             credentialsId: 'Admin_Bitbucket'
                         ]],
                         extensions: [
-                            [$class: 'CloneOption',
-                                shallow: true,
-                                depth: 1,
-                                noTags: true,
-                                honorRefspec: true,
-                                timeout: 30
-                            ]
+                            [$class: 'CloneOption', shallow: true, depth: 1, noTags: true, honorRefspec: true, timeout: 30]
                         ]
                     ])
                 }
@@ -249,14 +202,10 @@ pipeline {
         stage('Validate Repo Content') {
             steps {
                 script {
-                    if (!fileExists(env.TEMPLATE_XML)) {
-                        error("Template XML not found after checkout: ${env.TEMPLATE_XML}")
-                    }
+                    if (!fileExists(env.TEMPLATE_XML)) { error("Template XML not found after checkout: ${env.TEMPLATE_XML}") }
 
                     for (pkg in SELECTED_PACKAGES) {
-                        if (!fileExists("IS/${pkg}")) {
-                            error("Package not found in repo: IS/${pkg}")
-                        }
+                        if (!fileExists("IS/${pkg}")) { error("Package not found in repo: IS/${pkg}") }
                     }
                 }
             }
@@ -268,25 +217,15 @@ pipeline {
                     def abeCommand = "${env.SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh"
                     def javaCommand = "${env.JAVA_HOME}/bin/java"
 
-                    if (!fileExists(abeCommand)) {
-                        error("ABE build command not found: ${abeCommand}")
-                    }
+                    if (!fileExists(abeCommand)) { error("ABE build command not found: ${abeCommand}") }
 
-                    if (!fileExists(env.ABE_BUILD_FILE)) {
-                        error("ABE build file not found: ${env.ABE_BUILD_FILE}")
-                    }
+                    if (!fileExists(env.ABE_BUILD_FILE)) { error("ABE build file not found: ${env.ABE_BUILD_FILE}") }
 
-                    if (!fileExists(javaCommand)) {
-                        error("Java executable not found: ${javaCommand}")
-                    }
+                    if (!fileExists(javaCommand)) { error("Java executable not found: ${javaCommand}") }
 
-                    if (!fileExists(env.PROJECT_AUTOMATOR)) {
-                        error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}")
-                    }
+                    if (!fileExists(env.PROJECT_AUTOMATOR)) { error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}") }
 
-                    if (!fileExists(env.DEPLOYER_CMD)) {
-                        error("Deployer command not found: ${env.DEPLOYER_CMD}")
-                    }
+                    if (!fileExists(env.DEPLOYER_CMD)) { error("Deployer command not found: ${env.DEPLOYER_CMD}") }
                 }
             }
         }
@@ -312,18 +251,11 @@ pipeline {
                 sh '''
                     echo "Cleaning previous build directories and status files..."
 
-                    rm -rf "${TEMP_SRC}" \
-                           "${BUILD_OUTPUT_DIR}" \
-                           "${GENERATED_DIR}"
+                    rm -rf "${TEMP_SRC}" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}"
 
-                    rm -f "${WORKSPACE}/build_output.zip" \
-                          "${WORKSPACE}/.deployment_failed" \
-                          "${WORKSPACE}/.rollback_status" \
-                          "${WORKSPACE}/.snapshot_created"
+                    rm -f "${WORKSPACE}/build_output.zip" "${WORKSPACE}/.deployment_failed" "${WORKSPACE}/.rollback_status" "${WORKSPACE}/.snapshot_created"
 
-                    mkdir -p "${TEMP_SRC}" \
-                             "${BUILD_OUTPUT_DIR}" \
-                             "${GENERATED_DIR}"
+                    mkdir -p "${TEMP_SRC}" "${BUILD_OUTPUT_DIR}" "${GENERATED_DIR}"
                 '''
 
                 script {
@@ -350,11 +282,7 @@ pipeline {
                 sh '''
                     echo "Prepared build source:"
 
-                    find "${TEMP_SRC}" \
-                        -mindepth 1 \
-                        -maxdepth 1 \
-                        -type d \
-                        -printf '%f\n' | sort
+                    find "${TEMP_SRC}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
                 '''
             }
         }
@@ -371,13 +299,7 @@ pipeline {
                     export JAVA_OPTS="-Xms2g -Xmx16g -XX:+UseG1GC"
                     export _JAVA_OPTIONS="-Xms2g -Xmx16g -XX:+UseG1GC"
 
-                    "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" \
-                        -Dbuild.output.dir="${BUILD_OUTPUT_DIR}" \
-                        -Dbuild.source.dir="${TEMP_SRC}" \
-                        -Denable.checkout=false \
-                        -Denable.archive=false \
-                        -Denable.build.IS=true \
-                        2>&1 | tee "${BUILD_LOG_FILE}"
+                    "${SAG_HOME}/common/AssetBuildEnvironment/bin/build.sh" -Dbuild.output.dir="${BUILD_OUTPUT_DIR}" -Dbuild.source.dir="${TEMP_SRC}" -Denable.checkout=false -Denable.archive=false -Denable.build.IS=true 2>&1 | tee "${BUILD_LOG_FILE}"
                 '''
             }
         }
@@ -583,11 +505,7 @@ pipeline {
 
 def sharedDeployerProjectExists(projectName) {
     withCredentials([
-        usernamePassword(
-            credentialsId: 'API_IS_Deployer',
-            usernameVariable: 'DEPLOYER_USER',
-            passwordVariable: 'DEPLOYER_PWD'
-        )
+        usernamePassword(credentialsId: 'API_IS_Deployer', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
     ]) {
         int status = sh(
             script: """
@@ -595,13 +513,7 @@ def sharedDeployerProjectExists(projectName) {
 
                 chmod +x \"\${DEPLOYER_CMD}\" || true
 
-                \"\${DEPLOYER_CMD}\" --list \\
-                    -candidate project \\
-                    -host \"\${DEPLOYER_HOST}\" \\
-                    -port \"\${DEPLOYER_PORT}\" \\
-                    -user \"\${DEPLOYER_USER}\" \\
-                    -pwd \"\${DEPLOYER_PWD}\" \\
-                    2>&1 | grep -Fq \"${projectName}\"
+                \"\${DEPLOYER_CMD}\" --list -candidate project -host \"\${DEPLOYER_HOST}\" -port \"\${DEPLOYER_PORT}\" -user \"\${DEPLOYER_USER}\" -pwd \"\${DEPLOYER_PWD}\" 2>&1 | grep -Fq \"${projectName}\"
             """,
             returnStatus: true
         )
@@ -650,25 +562,13 @@ def generateProjectAutomatorXml(packages) {
 }
 
 def createDeployerProject() {
-    if (!fileExists(env.GENERATED_XML)) {
-        error("Generated Project Automator XML not found: ${env.GENERATED_XML}")
-    }
+    if (!fileExists(env.GENERATED_XML)) { error("Generated Project Automator XML not found: ${env.GENERATED_XML}") }
 
-    if (!fileExists(env.PROJECT_AUTOMATOR)) {
-        error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}")
-    }
+    if (!fileExists(env.PROJECT_AUTOMATOR)) { error("Project Automator script not found: ${env.PROJECT_AUTOMATOR}") }
 
     withCredentials([
-        usernamePassword(
-            credentialsId: 'API_IS_Deployer',
-            usernameVariable: 'DEPLOYER_USER',
-            passwordVariable: 'DEPLOYER_PWD'
-        ),
-        usernamePassword(
-            credentialsId: 'API_IS_Target',
-            usernameVariable: 'IS_USER',
-            passwordVariable: 'IS_PWD'
-        )
+        usernamePassword(credentialsId: 'API_IS_Deployer', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD'),
+        usernamePassword(credentialsId: 'API_IS_Target', usernameVariable: 'IS_USER', passwordVariable: 'IS_PWD')
     ]) {
         sh '''
                 sed -i "s|\\${DEPLOYER_USER}|${DEPLOYER_USER}|g" "${GENERATED_XML}"
@@ -715,12 +615,7 @@ def validateSharedPackageManifest(packages) {
         return
     }
 
-    def expectedPackages = readFile(manifestPath)
-        .readLines()
-        .collect { it.trim() }
-        .findAll { it }
-        .unique()
-        .sort()
+    def expectedPackages = readFile(manifestPath).readLines().collect { it.trim() }.findAll { it }.unique().sort()
     def requestedPackages = canonicalPackageList(packages)
 
     if (requestedPackages != expectedPackages) {
@@ -783,9 +678,7 @@ def validateSharedTargetManifest(selectedTargets) {
     def selectedAlias = getTargetConfigs(selectedTargets).first().alias
     def configuredAlias = targetAliases[env.ENVIRONMENT_NAME]
 
-    if (!configuredAlias) {
-        error("No target alias is recorded for ${env.ENVIRONMENT_NAME} in ${manifestPath}.")
-    }
+    if (!configuredAlias) { error("No target alias is recorded for ${env.ENVIRONMENT_NAME} in ${manifestPath}.") }
 
     if (selectedAlias != configuredAlias) {
         error(
@@ -816,28 +709,13 @@ def deploymentSetRequiresUpdate(packages, environmentName) {
     int comparisonStatus
 
     withCredentials([
-        usernamePassword(
-            credentialsId: 'API_IS_Deployer',
-            usernameVariable: 'DEPLOYER_USER',
-            passwordVariable: 'DEPLOYER_PWD'
-        )
+        usernamePassword(credentialsId: 'API_IS_Deployer', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
     ]) {
         comparisonStatus = sh(
             script: """
                 set +x
 
-                curl --noproxy '*' \\
-                    --silent \\
-                    --show-error \\
-                    --fail \\
-                    --connect-timeout 5 \\
-                    --max-time 120 \\
-                    --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" \\
-                    --get \\
-                    --data-urlencode 'projectName=${epic}' \\
-                    --data-urlencode 'bundleName=${deploymentSetName}' \\
-                    "\${DEPLOYER_HTTP_URL}" \\
-                    --output '${pageFile}' || exit 20
+                curl --noproxy '*' --silent --show-error --fail --connect-timeout 5 --max-time 120 --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" --get --data-urlencode 'projectName=${epic}' --data-urlencode 'bundleName=${deploymentSetName}' "\${DEPLOYER_HTTP_URL}" --output '${pageFile}' || exit 20
 
                 python3 - '${pageFile}' '${currentFile}' <<'PY'
 from html.parser import HTMLParser
@@ -903,61 +781,25 @@ def updateDeploymentSet(packages, environmentName) {
     }.join(' \\\n                    ')
 
     withCredentials([
-        usernamePassword(
-            credentialsId: 'API_IS_Deployer',
-            usernameVariable: 'DEPLOYER_USER',
-            passwordVariable: 'DEPLOYER_PWD'
-        )
+        usernamePassword(credentialsId: 'API_IS_Deployer', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
     ]) {
         sh """
             set +x
 
-            curl --noproxy '*' \\
-                --silent \\
-                --show-error \\
-                --fail \\
-                --connect-timeout 5 \\
-                --max-time 120 \\
-                --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" \\
-                --get \\
-                --data-urlencode 'projectName=${epic}' \\
-                --data-urlencode 'bundleName=${deploymentSetName}' \\
-                "\${DEPLOYER_HTTP_URL}" \\
-                --output "\${GENERATED_DIR}/available-composites.html"
+            curl --noproxy '*' --silent --show-error --fail --connect-timeout 5 --max-time 120 --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" --get --data-urlencode 'projectName=${epic}' --data-urlencode 'bundleName=${deploymentSetName}' "\${DEPLOYER_HTTP_URL}" --output "\${GENERATED_DIR}/available-composites.html"
 
             ${packageChecks}
 
-            curl --noproxy '*' \\
-                --silent \\
-                --show-error \\
-                --fail \\
-                --connect-timeout 5 \\
-                --max-time 120 \\
-                --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" \\
-                --request POST \\
-                --data-urlencode 'projectName=${epic}' \\
-                --data-urlencode 'bundleName=${deploymentSetName}' \\
-                --data-urlencode 'action=updateDeveloper' \\
-                --data-urlencode 'regExp=' \\
-                --data-urlencode 'regExp2=' \\
-                ${packageArguments} \\
-                "\${DEPLOYER_HTTP_URL}" \\
-                --output "\${GENERATED_DIR}/update-deployment-set.html"
+            curl --noproxy '*' --silent --show-error --fail --connect-timeout 5 --max-time 120 --user "\${DEPLOYER_USER}:\${DEPLOYER_PWD}" --request POST --data-urlencode 'projectName=${epic}' --data-urlencode 'bundleName=${deploymentSetName}' --data-urlencode 'action=updateDeveloper' --data-urlencode 'regExp=' --data-urlencode 'regExp2=' ${packageArguments} "\${DEPLOYER_HTTP_URL}" --output "\${GENERATED_DIR}/update-deployment-set.html"
 
-            grep -Fq \\
-                'Successfully updated Composites in deployment set ${deploymentSetName}.' \\
-                "\${GENERATED_DIR}/update-deployment-set.html"
+            grep -Fq 'Successfully updated Composites in deployment set ${deploymentSetName}.' "\${GENERATED_DIR}/update-deployment-set.html"
         """
     }
 }
 
 def createSnapshot() {
     withCredentials([
-        usernamePassword(
-            credentialsId: 'API_IS_Deployer',
-            usernameVariable: 'DEPLOYER_USER',
-            passwordVariable: 'DEPLOYER_PWD'
-        )
+        usernamePassword(credentialsId: 'API_IS_Deployer', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
     ]) {
         def snapshotStatus = sh(
             script: '''
@@ -965,15 +807,7 @@ def createSnapshot() {
                 set -o pipefail
                 chmod +x "${DEPLOYER_CMD}" || true
 
-                "${DEPLOYER_CMD}" --checkpoint \
-                    -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" \
-                    -project "${EPIC_NAME}" \
-                    -host "${DEPLOYER_HOST}" \
-                    -port "${DEPLOYER_PORT}" \
-                    -user "${DEPLOYER_USER}" \
-                    -pwd "${DEPLOYER_PWD}" \
-                    -reportFilePath "${GENERATED_DIR}/checkpoint-report.xml" \
-                    2>&1 | tee "${GENERATED_DIR}/checkpoint.log"
+                "${DEPLOYER_CMD}" --checkpoint -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" -project "${EPIC_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}" -reportFilePath "${GENERATED_DIR}/checkpoint-report.xml" 2>&1 | tee "${GENERATED_DIR}/checkpoint.log"
             ''',
             returnStatus: true
         )
@@ -1003,24 +837,13 @@ def deployCandidate() {
     int deployStatus
 
     withCredentials([
-        usernamePassword(
-            credentialsId: 'API_IS_Deployer',
-            usernameVariable: 'DEPLOYER_USER',
-            passwordVariable: 'DEPLOYER_PWD'
-        )
+        usernamePassword(credentialsId: 'API_IS_Deployer', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
     ]) {
         deployStatus = sh(
             script: '''
                 chmod +x "${DEPLOYER_CMD}" || true
 
-                "${DEPLOYER_CMD}" --deploy \
-                    -project "${EPIC_NAME}" \
-                    -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" \
-                    -host "${DEPLOYER_HOST}" \
-                    -port "${DEPLOYER_PORT}" \
-                    -user "${DEPLOYER_USER}" \
-                    -pwd "${DEPLOYER_PWD}" \
-                    -force
+                "${DEPLOYER_CMD}" --deploy -project "${EPIC_NAME}" -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}" -force
             ''',
             returnStatus: true
         )
@@ -1039,11 +862,7 @@ def rollbackDeployment() {
     int rollbackStatus
 
     withCredentials([
-        usernamePassword(
-            credentialsId: 'API_IS_Deployer',
-            usernameVariable: 'DEPLOYER_USER',
-            passwordVariable: 'DEPLOYER_PWD'
-        )
+        usernamePassword(credentialsId: 'API_IS_Deployer', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
     ]) {
         rollbackStatus = sh(
             script: '''
@@ -1051,13 +870,7 @@ def rollbackDeployment() {
 
                 chmod +x "${DEPLOYER_CMD}" || true
 
-                "${DEPLOYER_CMD}" --rollback \
-                    -project "${EPIC_NAME}" \
-                    -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" \
-                    -host "${DEPLOYER_HOST}" \
-                    -port "${DEPLOYER_PORT}" \
-                    -user "${DEPLOYER_USER}" \
-                    -pwd "${DEPLOYER_PWD}"
+                "${DEPLOYER_CMD}" --rollback -project "${EPIC_NAME}" -dc "${EPIC_NAME}_${ENVIRONMENT_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}"
             ''',
             returnStatus: true
         )
@@ -1199,9 +1012,7 @@ def getTargetConfigs(serverNames) {
     ]
 
     serverNames.each { targetName ->
-        if (!targetConfigMap[targetName]) {
-            error("No target configuration found for ${targetName}")
-        }
+        if (!targetConfigMap[targetName]) { error("No target configuration found for ${targetName}") }
     }
 
     serverNames.collect {

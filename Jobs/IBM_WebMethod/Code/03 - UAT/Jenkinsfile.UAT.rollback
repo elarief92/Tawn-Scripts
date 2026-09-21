@@ -35,21 +35,13 @@ pipeline {
                 script {
                     String epicName = params.EPIC_NAME?.trim()
 
-                    if (!epicName) {
-                        error('EPIC_NAME is required')
-                    }
+                    if (!epicName) { error('EPIC_NAME is required') }
 
-                    if (!(epicName ==~ /[A-Za-z0-9._-]+/)) {
-                        error('EPIC_NAME may contain only letters, numbers, dots, underscores and hyphens')
-                    }
+                    if (!(epicName ==~ /[A-Za-z0-9._-]+/)) { error('EPIC_NAME may contain only letters, numbers, dots, underscores and hyphens') }
 
-                    if (!params.CONFIRM_ROLLBACK) {
-                        error('CONFIRM_ROLLBACK must be checked before running rollback')
-                    }
+                    if (!params.CONFIRM_ROLLBACK) { error('CONFIRM_ROLLBACK must be checked before running rollback') }
 
-                    if (!fileExists(env.DEPLOYER_CMD)) {
-                        error("Deployer command not found: ${env.DEPLOYER_CMD}")
-                    }
+                    if (!fileExists(env.DEPLOYER_CMD)) { error("Deployer command not found: ${env.DEPLOYER_CMD}") }
 
                     env.EPIC_NAME = epicName
                     env.CANDIDATE_NAME = "${epicName}_${env.ENVIRONMENT_NAME}"
@@ -88,9 +80,7 @@ pipeline {
             steps {
                 script {
                     int rollbackStatus = executeRollback()
-                    if (rollbackStatus != 0) {
-                        error("Rollback failed with exit code ${rollbackStatus}")
-                    }
+                    if (rollbackStatus != 0) { error("Rollback failed with exit code ${rollbackStatus}") }
                 }
             }
         }
@@ -118,11 +108,7 @@ def executeRollback() {
     int status
 
     withCredentials([
-        usernamePassword(
-            credentialsId: 'API_IS_Deployer',
-            usernameVariable: 'DEPLOYER_USER',
-            passwordVariable: 'DEPLOYER_PWD'
-        )
+        usernamePassword(credentialsId: 'API_IS_Deployer', usernameVariable: 'DEPLOYER_USER', passwordVariable: 'DEPLOYER_PWD')
     ]) {
         status = sh(
             script: '''
@@ -130,15 +116,7 @@ def executeRollback() {
                 set -o pipefail
                 chmod +x "${DEPLOYER_CMD}" || true
 
-                "${DEPLOYER_CMD}" --rollback \
-                    -project "${EPIC_NAME}" \
-                    -dc "${CANDIDATE_NAME}" \
-                    -host "${DEPLOYER_HOST}" \
-                    -port "${DEPLOYER_PORT}" \
-                    -user "${DEPLOYER_USER}" \
-                    -pwd "${DEPLOYER_PWD}" \
-                    -reportFilePath "${GENERATED_DIR}/rollback-report.xml" \
-                    2>&1 | tee "${GENERATED_DIR}/rollback.log"
+                "${DEPLOYER_CMD}" --rollback -project "${EPIC_NAME}" -dc "${CANDIDATE_NAME}" -host "${DEPLOYER_HOST}" -port "${DEPLOYER_PORT}" -user "${DEPLOYER_USER}" -pwd "${DEPLOYER_PWD}" -reportFilePath "${GENERATED_DIR}/rollback-report.xml" 2>&1 | tee "${GENERATED_DIR}/rollback.log"
             ''',
             returnStatus: true
         )
@@ -146,12 +124,8 @@ def executeRollback() {
 
     if (status != 0 && fileExists("${env.GENERATED_DIR}/rollback.log")) {
         String rollbackLog = readFile("${env.GENERATED_DIR}/rollback.log")
-        if (rollbackLog.contains('[DEP.0002.0148]')) {
-            error("Rollback unavailable: candidate ${env.CANDIDATE_NAME} does not exist.")
-        }
-        if (rollbackLog.contains('[DEP.0002.0153]')) {
-            error("Rollback unavailable: candidate ${env.CANDIDATE_NAME} has no active checkpoint.")
-        }
+        if (rollbackLog.contains('[DEP.0002.0148]')) { error("Rollback unavailable: candidate ${env.CANDIDATE_NAME} does not exist.") }
+        if (rollbackLog.contains('[DEP.0002.0153]')) { error("Rollback unavailable: candidate ${env.CANDIDATE_NAME} has no active checkpoint.") }
     }
 
     return status
